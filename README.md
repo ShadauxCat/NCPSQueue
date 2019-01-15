@@ -4,15 +4,20 @@ Reference implementation for the N-Core Positive Scaling Concurrent Queue, which
 
 `NCPS::ConcurrentQueue` is a generic queue that comes in both bounded and non-bounded formats, and uses the concept of a ReservationTicket to provilde wait-free performance in 99% of cases with the unbounded queue (a spin-lock must be taken when the queue needs to resize, which happens once per N enqueues, where N is a configurable bucket size - by default, 8192) and in 100% of cases with the bounded queue. 
 
-In practice, the unbounded queue actually tends to be faster than the bounded queue because enqueuing to the unbounded queue can never fail, meaning there are fewer edge cases it has to consider. However, the bounded queue's performance will be more consistent as it will never have to allocate a new buffer.
-
-Another benefit of the bounded queue over the unbounded one is predictable memory performance - the bounded queue will use memory equal to `N * (sizeof(T) + sizeof(bool))`, while the unbounded queue will start at `N * (sizeof(T) + sizeof(bool))` and will experience at least one growth in its lifetime even if you don't exceed N elements in the queue at a time, meaning its memory usage in the best case ends up being `2 * N * (sizeof(T) + sizeof(bool))`. In the worst case, if you consistently enqueue faster than you dequeue, the unbounded queue will grow infinitely - however, this is unlikely to happen in practice with well-written code.
-
-Another thing to be aware of with the unbounded queue is that its memory usage will always remain at its high watermark. While the queue is in use, there is no safe way to deallocate buffers without incurring the cost of reference counting (which is significant), so the memory isn't released until the queue itself is destroyed.
 
 ## Scaling
 
 As indicated by the name (N-Core Positive Scaling Concurrent Queue), `NPSC::ConcurrentQueue` has a unique property among popular concurrent queue implementations in that it is capable of scaling positively as more cores are added. Other tested implementations achieve flat performance with more cores - the overall system throughput doesn't change as more cores are added, but instead, the throughput just gets spread out as each thread individually performs slower due to the extra activity in the system. `NPSC::ConcurrentQueue`, like most queues, operates at its fastest total system throughput in the single-producer, single-consumer case; however, unlike other tested implementations, the overall throughput of the system increases as more cores are added. (Though it takes a large number of cores in the multi-producer and/or multi-consumer cases to reach the throughput of the single-producer/single-consumer case.)
+
+## Bounded vs Unbounded
+
+In practice, the unbounded queue actually tends to be faster than the bounded queue because enqueuing to the unbounded queue can never fail, meaning there are fewer edge cases it has to consider. However, the bounded queue's performance will be more consistent as it will never have to allocate a new buffer.
+
+## Memory usage
+
+One benefit of the bounded queue over the unbounded one is predictable memory performance - the bounded queue will use memory equal to `N * (sizeof(T) + sizeof(bool))`, while the unbounded queue will start at `N * (sizeof(T) + sizeof(bool))` and will experience at least one growth in its lifetime even if you don't exceed N elements in the queue at a time, meaning its memory usage in the best case ends up being `2 * N * (sizeof(T) + sizeof(bool))`. In the worst case, if you consistently enqueue faster than you dequeue, the unbounded queue will grow infinitely - however, this is unlikely to happen in practice with well-written code.
+
+Another thing to be aware of with the unbounded queue is that its memory usage will always remain at its high watermark. While the queue is in use, there is no safe way to deallocate buffers without incurring the cost of reference counting (which is significant), so the memory isn't released until the queue itself is destroyed.
 
 ## Reservation Tickets
 
