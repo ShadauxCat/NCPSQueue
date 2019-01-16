@@ -9,6 +9,9 @@ Reference implementation for the N-Core Positive Scaling Concurrent Queue, which
 
 As indicated by the name (N-Core Positive Scaling Concurrent Queue), `NCPS::ConcurrentQueue` has a unique property among popular concurrent queue implementations in that it is capable of scaling positively as more cores are added. Other tested implementations achieve flat performance with more cores - the overall system throughput doesn't change as more cores are added, but instead, the throughput just gets spread out as each thread individually performs slower due to the extra activity in the system. `NCPS::ConcurrentQueue`, like most queues, operates at its fastest total system throughput in the single-producer, single-consumer case; however, unlike other tested implementations, the overall throughput of the system increases as more cores are added. (Though it takes a large number of cores in the multi-producer and/or multi-consumer cases to reach the throughput of the single-producer/single-consumer case.)
 
+![Positive Scaling](https://raw.githubusercontent.com/ShadauxCat/NCPSQueue/master/benchmarks/int64_t/heatmaps/NCPS.png)
+![Comparison](https://raw.githubusercontent.com/ShadauxCat/NCPSQueue/master/benchmarks/int64_t/comparisons/symmetrical.png)
+
 ## Bounded vs Unbounded
 
 In practice, the unbounded queue actually tends to be faster than the bounded queue because enqueuing to the unbounded queue can never fail, meaning there are fewer edge cases it has to consider. However, the bounded queue's performance will be more consistent as it will never have to allocate a new buffer.
