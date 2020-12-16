@@ -5,11 +5,12 @@
 // Copyright (c) 2009-2014 Mateusz Loskot, London, UK.
 // Copyright (c) 2013-2014 Adam Wulkiewicz, Lodz, Poland.
 
-// This file was modified by Oracle on 2013-2017.
-// Modifications copyright (c) 2013-2017, Oracle and/or its affiliates.
+// This file was modified by Oracle on 2013-2019.
+// Modifications copyright (c) 2013-2019, Oracle and/or its affiliates.
 
-// Contributed and/or modified by Adam Wulkiewicz, on behalf of Oracle
+// Contributed and/or modified by Vissarion Fysikopoulos, on behalf of Oracle
 // Contributed and/or modified by Menelaos Karavelas, on behalf of Oracle
+// Contributed and/or modified by Adam Wulkiewicz, on behalf of Oracle
 
 // Use, modification and distribution is subject to the Boost Software License,
 // Version 1.0. (See accompanying file LICENSE_1_0.txt or copy at
@@ -34,6 +35,7 @@
 
 #include <boost/geometry/algorithms/detail/assign_indexed_point.hpp>
 
+#include <boost/geometry/strategies/cartesian/point_in_box.hpp>
 #include <boost/geometry/strategies/disjoint.hpp>
 
 
@@ -245,22 +247,11 @@ struct disjoint_segment_box_impl
 // other strategies that are used are intersection and covered_by strategies.
 struct segment_box
 {
-    template <typename Segment, typename Box>
-    struct point_in_geometry_strategy
-        : services::default_strategy
-            <
-                typename point_type<Segment>::type,
-                Box
-            >
-    {};
+    typedef covered_by::cartesian_point_box disjoint_point_box_strategy_type;
 
-    template <typename Segment, typename Box>
-    static inline typename point_in_geometry_strategy<Segment, Box>::type
-        get_point_in_geometry_strategy()
+    static inline disjoint_point_box_strategy_type get_disjoint_point_box_strategy()
     {
-        typedef typename point_in_geometry_strategy<Segment, Box>::type strategy_type;
-
-        return strategy_type();
+        return disjoint_point_box_strategy_type();
     }
 
     template <typename Segment, typename Box>
@@ -293,16 +284,14 @@ struct segment_box
 namespace services
 {
 
-// Currently used in all coordinate systems
-
 template <typename Linear, typename Box, typename LinearTag>
-struct default_strategy<Linear, Box, LinearTag, box_tag, 1, 2>
+struct default_strategy<Linear, Box, LinearTag, box_tag, 1, 2, cartesian_tag, cartesian_tag>
 {
     typedef disjoint::segment_box type;
 };
 
 template <typename Box, typename Linear, typename LinearTag>
-struct default_strategy<Box, Linear, box_tag, LinearTag, 2, 1>
+struct default_strategy<Box, Linear, box_tag, LinearTag, 2, 1, cartesian_tag, cartesian_tag>
 {
     typedef disjoint::segment_box type;
 };

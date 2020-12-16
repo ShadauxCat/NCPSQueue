@@ -15,6 +15,7 @@
 
 #include <boost/assert.hpp>
 #include <boost/config.hpp>
+#include <boost/context/detail/config.hpp>
 
 #include <boost/fiber/context.hpp>
 #include <boost/fiber/detail/config.hpp>
@@ -43,7 +44,7 @@ enum class cv_status {
 
 class BOOST_FIBERS_DECL condition_variable_any {
 private:
-    typedef context::wait_queue_t   wait_queue_t;
+    using wait_queue_t = context::wait_queue_t;
 
     detail::spinlock    wait_queue_splk_{};
     wait_queue_t        wait_queue_{};
@@ -70,6 +71,7 @@ public:
         detail::spinlock_lock lk{ wait_queue_splk_ };
         BOOST_ASSERT( ! active_ctx->wait_is_linked() );
         active_ctx->wait_link( wait_queue_);
+        active_ctx->twstatus.store( static_cast< std::intptr_t >( 0), std::memory_order_release);
         // unlock external lt
         lt.unlock();
         // suspend this fiber
@@ -77,6 +79,10 @@ public:
         // relock external again before returning
         try {
             lt.lock();
+#if defined(BOOST_CONTEXT_HAS_CXXABI_H)
+        } catch ( abi::__forced_unwind const&) {
+            throw;
+#endif
         } catch (...) {
             std::terminate();
         }
@@ -101,6 +107,7 @@ public:
         detail::spinlock_lock lk{ wait_queue_splk_ };
         BOOST_ASSERT( ! active_ctx->wait_is_linked() );
         active_ctx->wait_link( wait_queue_);
+        active_ctx->twstatus.store( reinterpret_cast< std::intptr_t >( this), std::memory_order_release);
         // unlock external lt
         lt.unlock();
         // suspend this fiber
@@ -116,6 +123,10 @@ public:
         // relock external again before returning
         try {
             lt.lock();
+#if defined(BOOST_CONTEXT_HAS_CXXABI_H)
+        } catch ( abi::__forced_unwind const&) {
+            throw;
+#endif
         } catch (...) {
             std::terminate();
         }

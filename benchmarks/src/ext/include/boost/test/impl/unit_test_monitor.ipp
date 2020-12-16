@@ -29,16 +29,19 @@
 namespace boost {
 namespace unit_test {
 
+// singleton pattern
+BOOST_TEST_SINGLETON_CONS_IMPL(unit_test_monitor_t)
+
 // ************************************************************************** //
 // **************               unit_test_monitor              ************** //
 // ************************************************************************** //
 
 unit_test_monitor_t::error_level
-unit_test_monitor_t::execute_and_translate( boost::function<void ()> const& func, unsigned timeout )
+unit_test_monitor_t::execute_and_translate( boost::function<void ()> const& func, unsigned long int timeout_microseconds )
 {
     BOOST_TEST_I_TRY {
         p_catch_system_errors.value     = runtime_config::get<bool>( runtime_config::btrt_catch_sys_errors );
-        p_timeout.value                 = timeout;
+        p_timeout.value                 = timeout_microseconds;
         p_auto_start_dbg.value          = runtime_config::get<bool>( runtime_config::btrt_auto_start_dbg );
         p_use_alt_stack.value           = runtime_config::get<bool>( runtime_config::btrt_use_alt_stack );
         p_detect_fp_exceptions.value    = runtime_config::get<bool>( runtime_config::btrt_detect_fp_except );
@@ -47,7 +50,7 @@ unit_test_monitor_t::execute_and_translate( boost::function<void ()> const& func
     }
     BOOST_TEST_I_CATCH( execution_exception, ex ) {
         framework::exception_caught( ex );
-        framework::test_unit_aborted( framework::current_test_case() );
+        framework::test_unit_aborted( framework::current_test_unit() );
 
         // translate execution_exception::error_code to error_level
         switch( ex.code() ) {

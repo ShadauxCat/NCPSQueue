@@ -165,7 +165,11 @@ enum class TicketType
 {
 	PERSISTENT,
 	EPHEMERAL,
-	NONE
+	NONE,
+	BATCH_1,
+	BATCH_10,
+	BATCH_100,
+	BATCH_1000,
 };
 
 template<typename t_QueueType, TicketType t_TicketType = TicketType::PERSISTENT>
@@ -452,8 +456,8 @@ private:
 	std::deque<t_ElementType> m_queue;
 };
 
-template<typename t_ElementType, TicketType t_TicketType>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType>, t_TicketType>
+template<typename t_ElementType, ssize_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>, TicketType::PERSISTENT>
 {
 public:
 	void enqueue(size_t nElements)
@@ -474,7 +478,7 @@ public:
 	}
 	void dequeue(size_t nElements)
 	{
-		NCPS::ReadReservationTicket<t_ElementType> ticket;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -485,7 +489,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		NCPS::ReadReservationTicket<t_ElementType> ticket;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -495,11 +499,189 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentQueue<t_ElementType> m_queue;
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded> m_queue;
 };
 
-template<typename t_ElementType>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType>, TicketType::EPHEMERAL>
+template<typename t_ElementType, ssize_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>, TicketType::BATCH_1>
+{
+public:
+	void enqueue(size_t nElements)
+	{
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			t_ElementType data = t_ElementType();
+			m_queue.EnqueueBatch(&data, 1);
+		}
+	}
+	void dequeue(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		size_t remaining = nElements;
+		
+		while(remaining > 0)
+		{
+			m_queue.DequeueBatch(batch, 1);
+			while(batch.More())
+			{
+				batch.Next();
+				--remaining;
+			}
+		}
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue.DequeueBatch(batch, 1);
+		}
+	}
+private:
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch> m_queue;
+};
+
+
+template<typename t_ElementType, ssize_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>, TicketType::BATCH_10>
+{
+public:
+	void enqueue(size_t nElements)
+	{
+		for (size_t i = 0; i < nElements; i += 10)
+		{
+			t_ElementType data[10];
+			for(size_t i = 0; i < 10; ++i)
+			{
+				data[i] = t_ElementType();
+			}
+			m_queue.EnqueueBatch(data, 10);
+		}
+	}
+	void dequeue(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		size_t remaining = nElements;
+		while(remaining > 0)
+		{
+			m_queue.DequeueBatch(batch, remaining < 10 ? remaining : 10);
+			while(batch.More())
+			{
+				batch.Next();
+				--remaining;
+			}
+		}
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue.DequeueBatch(batch, 10);
+		}
+	}
+private:
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch> m_queue;
+};
+
+template<typename t_ElementType, ssize_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>, TicketType::BATCH_100>
+{
+public:
+	void enqueue(size_t nElements)
+	{
+		for (size_t i = 0; i < nElements; i += 100)
+		{
+			t_ElementType data[100];
+			for(size_t i = 0; i < 100; ++i)
+			{
+				data[i] = t_ElementType();
+			}
+			m_queue.EnqueueBatch(data, 100);
+		}
+	}
+	void dequeue(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		size_t remaining = nElements;
+		while(remaining > 0)
+		{
+			m_queue.DequeueBatch(batch, remaining < 100 ? remaining : 100);
+			while(batch.More())
+			{
+				batch.Next();
+				--remaining;
+			}
+		}
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue.DequeueBatch(batch, 100);
+		}
+	}
+private:
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch> m_queue;
+};
+
+template<typename t_ElementType, ssize_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>, TicketType::BATCH_1000>
+{
+public:
+	void enqueue(size_t nElements)
+	{
+		for (size_t i = 0; i < nElements; i += 1000)
+		{
+			t_ElementType data[1000];
+			for(size_t i = 0; i < 1000; ++i)
+			{
+				data[i] = t_ElementType();
+			}
+			m_queue.EnqueueBatch(data, 1000);
+		}
+	}
+	void dequeue(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		size_t remaining = nElements;
+		while(remaining > 0)
+		{
+			m_queue.DequeueBatch(batch, remaining < 1000 ? remaining : 1000);
+			while(batch.More())
+			{
+				batch.Next();
+				--remaining;
+			}
+		}
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::BatchDequeueList batch;
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue.DequeueBatch(batch, 1000);
+		}
+	}
+private:
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch> m_queue;
+};
+
+template<typename t_ElementType, ssize_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>, TicketType::EPHEMERAL>
 {
 public:
 	void enqueue(size_t nElements)
@@ -523,14 +705,14 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			NCPS::ReadReservationTicket<t_ElementType> ticket;
+			typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::ReadReservationTicket ticket;
 			m_queue.InitializeReservationTicket(ticket);
 			while (!m_queue.Dequeue(data, ticket)) {};
 		}
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		NCPS::ReadReservationTicket<t_ElementType> ticket;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -540,11 +722,11 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentQueue<t_ElementType> m_queue;
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch> m_queue;
 };
 
-template<typename t_ElementType>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType>, TicketType::NONE>
+template<typename t_ElementType, ssize_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
@@ -584,150 +766,15 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentQueue<t_ElementType> m_queue;
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch> m_queue;
 };
 
-template<typename t_ElementType, TicketType t_TicketType>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, t_TicketType>
-{
-public:
-	void enqueue(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.Enqueue(data);
-		}
-	}
-	void enqueueMove(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.Enqueue(std::move(data));
-		}
-	}
-	void dequeue(size_t nElements)
-	{
-		NCPS::ReadReservationTicket<t_ElementType, NUM_ELEMENTS> ticket;
-		m_queue.InitializeReservationTicket(ticket);
-
-		t_ElementType data = t_ElementType();
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			while (!m_queue.Dequeue(data, ticket)) {};
-		}
-	}
-	void dequeueEmpty(size_t nElements)
-	{
-		NCPS::ReadReservationTicket<t_ElementType, NUM_ELEMENTS> ticket;
-		m_queue.InitializeReservationTicket(ticket);
-
-		t_ElementType data = t_ElementType();
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			m_queue.Dequeue(data, ticket);
-		}
-	}
-private:
-	NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS> m_queue;
-};
-
-template<typename t_ElementType>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::EPHEMERAL>
-{
-public:
-	void enqueue(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.Enqueue(data);
-		}
-	}
-	void enqueueMove(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.Enqueue(std::move(data));
-		}
-	}
-	void dequeue(size_t nElements)
-	{
-		t_ElementType data = t_ElementType();
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			NCPS::ReadReservationTicket<t_ElementType, NUM_ELEMENTS> ticket;
-			m_queue.InitializeReservationTicket(ticket);
-			while (!m_queue.Dequeue(data, ticket)) {};
-		}
-	}
-	void dequeueEmpty(size_t nElements)
-	{
-		t_ElementType data = t_ElementType();
-		NCPS::ReadReservationTicket<t_ElementType, NUM_ELEMENTS> ticket;
-
-		m_queue.InitializeReservationTicket(ticket);
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			m_queue.Dequeue(data, ticket);
-		}
-	}
-private:
-	NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS> m_queue;
-};
-
-template<typename t_ElementType>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>
+template<typename t_ElementType, bool t_CachePadded, TicketType t_TicketType>
+class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_CachePadded>, t_TicketType>
 {
 public:
 	QueueWrapper()
-		: m_queue(1024)
-	{}
-
-	void enqueue(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.Enqueue(data);
-		}
-	}
-	void enqueueMove(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.Enqueue(std::move(data));
-		}
-	}
-	void dequeue(size_t nElements)
-	{
-		t_ElementType data = t_ElementType();
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			while (!m_queue.Dequeue(data)) {};
-		}
-	}
-	void dequeueEmpty(size_t nElements)
-	{
-		t_ElementType data = t_ElementType();
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			m_queue.Dequeue(data);
-		}
-	}
-private:
-	NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS> m_queue;
-};
-
-template<typename t_ElementType, TicketType t_TicketType>
-class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, t_TicketType>
-{
-public:
-	QueueWrapper()
-		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>())
+		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_CachePadded>())
 	{}
 	
 	~QueueWrapper()
@@ -776,16 +823,16 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>* m_queue;
+	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_CachePadded>* m_queue;
 };
 
 
-template<typename t_ElementType>
-class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>
+template<typename t_ElementType, bool t_CachePadded>
+class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_CachePadded>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
-		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>(1024, 1024))
+		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_CachePadded>(1024, 1024))
 	{}
 
 	~QueueWrapper()
@@ -826,7 +873,7 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>* m_queue;
+	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_CachePadded>* m_queue;
 };
 template<typename t_Type>
 struct TypeName
@@ -839,11 +886,12 @@ public:
 #ifdef _WIN32
 		std::string ret = __FUNCTION__;
 		ret = ret.substr(ret.find('<')+7);
+		ret = ret.substr(0, ret.find("GetName") - 4);
 #else
 		std::string ret = __PRETTY_FUNCTION__;
-		ret = ret.substr(ret.find('<')+1);
+		ret = ret.substr(ret.find("t_Type = ")+9);
+		ret = ret.substr(0, ret.find(";"));
 #endif
-		ret = ret.substr(0, ret.find("GetName") - 4);
 		if (useMove)
 		{
 			ret += " [moves]";
@@ -855,6 +903,18 @@ public:
 			break;
 		case TicketType::NONE:
 			ret += " [No Tickets]";
+			break;
+		case TicketType::BATCH_1:
+			ret += " [Batch (1)]";
+			break;
+		case TicketType::BATCH_10:
+			ret += " [Batch (10)]";
+			break;
+		case TicketType::BATCH_100:
+			ret += " [Batch (100)]";
+			break;
+		case TicketType::BATCH_1000:
+			ret += " [Batch (1000)]";
 			break;
 		default:
 			break;
@@ -951,6 +1011,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 					enqueueFunc
 				)
 			);
+#if 0
 #ifdef _WIN32
 			if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
 			{
@@ -966,6 +1027,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			{
 				abort();
 			}
+#endif
 #endif
 		}
 		while(started.load() < enqueueThreads) {}
@@ -992,6 +1054,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 						dequeueFunc
 					)
 				);
+#if 0
 #ifdef _WIN32
 				if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
 				{
@@ -1007,6 +1070,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				{
 					abort();
 				}
+#endif
 #endif
 			}
 			while(started.load() < dequeueThreads) {}
@@ -1039,6 +1103,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 							fn
 						)
 					);
+#if 0
 #ifdef _WIN32
 					if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << ((enq + deq) % std::thread::hardware_concurrency())))
 					{
@@ -1055,6 +1120,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 						abort();
 					}
 #endif
+#endif
 				}
 				if (++enq <= enqueueThreads)
 				{
@@ -1065,6 +1131,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 							fn
 						)
 					);
+#if 0
 #ifdef _WIN32
 					if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << ((enq + deq) % std::thread::hardware_concurrency())))
 					{
@@ -1080,6 +1147,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 					{
 						abort();
 					}
+#endif
 #endif
 				}
 				if (enq >= enqueueThreads && deq >= dequeueThreads)
@@ -1114,6 +1182,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 						fn
 					)
 				);
+#if 0
 #ifdef _WIN32
 				if (!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
 				{
@@ -1129,6 +1198,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				{
 					abort();
 				}
+#endif
 #endif
 			}
 			while(started.load() < dequeueThreads) {}
@@ -1199,51 +1269,69 @@ void PrintEmpty()
 
 class NoBoost {};
 
-template<typename t_ElementType>
+template<typename t_ElementType, bool t_SupportsBoost = true>
 void RunTestsOnElementType()
 {
 	RunTestsOnQueueType<t_ElementType, ext_1024cores::mpmc_bounded_queue<t_ElementType>>();
 	RunTestsOnQueueType<t_ElementType, tbb::concurrent_bounded_queue<t_ElementType>>();
 	RunTestsOnQueueType<t_ElementType, tbb::concurrent_queue<t_ElementType>>();
-	RunTestsOnQueueType<t_ElementType, boost::lockfree::queue<t_ElementType>>();
+	if constexpr(t_SupportsBoost)
+	{
+		RunTestsOnQueueType<t_ElementType, boost::lockfree::queue<t_ElementType>>();
+	}
+	else
+	{
+		PrintEmpty<t_ElementType, boost::lockfree::queue<t_ElementType>>();
+	}
 	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>>();
 	
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, false, false>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::BATCH_1>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::BATCH_10>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::BATCH_100>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::BATCH_1000>();
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false, false>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::BATCH_1>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::BATCH_10>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::BATCH_100>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::BATCH_1000>();
 
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::EPHEMERAL>();
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, false, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false, false>, TicketType::EPHEMERAL>();
 
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
+	
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true, false>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH_1>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH_10>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH_100>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH_1000>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true, false>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_1>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_10>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_100>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_1000>();
+
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true, false>, TicketType::EPHEMERAL>();
+
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
 
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>>();
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
-}
-
-template<typename t_ElementType>
-void RunTestsOnElementType(NoBoost const&)
-{
-	RunTestsOnQueueType<t_ElementType, ext_1024cores::mpmc_bounded_queue<t_ElementType>>();
-	RunTestsOnQueueType<t_ElementType, tbb::concurrent_bounded_queue<t_ElementType>>();
-	RunTestsOnQueueType<t_ElementType, tbb::concurrent_queue<t_ElementType>>();
-
-	// Boost fails to compile with this element type
-	PrintEmpty<t_ElementType, boost::lockfree::queue<t_ElementType>>();
-
-	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>>();
-
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>>();
-
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::EPHEMERAL>();
-
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
-
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
+	
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
 }
 
 template<size_t t_Size>
@@ -1271,5 +1359,6 @@ int main()
 	std::cout << std::fixed;
 	RunTestsOnElementType<char>();
 	RunTestsOnElementType<int64_t>();
-	RunTestsOnElementType<FixedStaticString<64>>(NoBoost());
+	RunTestsOnElementType<FixedStaticString<64>, false>();
 }
+

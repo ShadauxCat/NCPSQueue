@@ -16,7 +16,8 @@ with csbuild.Toolchain("msvc"):
 	csbuild.AddCompilerFlags("/EHsc")
 	
 with csbuild.ToolchainGroup("gnu"):
-	csbuild.AddCompilerFlags("-std=c++11")
+	csbuild.AddCompilerFlags("-std=c++17", "-pthread")
+	csbuild.AddLibraries("pthread")
 
 with csbuild.Project("QueueTests", ".", [], autoDiscoverSourceFiles=False):
 	csbuild.SetOutputDirectory(".")

@@ -2,8 +2,8 @@
 
 // Copyright (c) 2007-2012 Barend Gehrels, Amsterdam, the Netherlands.
 
-// This file was modified by Oracle on 2013, 2014, 2015, 2017.
-// Modifications copyright (c) 2013-2017 Oracle and/or its affiliates.
+// This file was modified by Oracle on 2013, 2014, 2015, 2017, 2018.
+// Modifications copyright (c) 2013-2018 Oracle and/or its affiliates.
 
 // Contributed and/or modified by Adam Wulkiewicz, on behalf of Oracle
 
@@ -60,29 +60,31 @@ struct point_geometry
         if ( BOOST_GEOMETRY_CONDITION(result.interrupt) )
             return;
 
-        // the point is on the boundary
-        if ( pig == 0 )
+        typedef detail::relate::topology_check
+            <
+                Geometry,
+                typename Strategy::equals_point_point_strategy_type
+            > tc_t;
+        if ( relate::may_update<exterior, interior, tc_t::interior, Transpose>(result)
+          || relate::may_update<exterior, boundary, tc_t::boundary, Transpose>(result) )
         {
-            // NOTE: even for MLs, if there is at least one boundary point,
-            // somewhere there must be another one
-
-            // check if there are other boundaries outside
-            typedef detail::relate::topology_check<Geometry> tc_t;
-            //tc_t tc(geometry, point);
-            //if ( tc.has_interior )
+            // the point is on the boundary
+            if ( pig == 0 )
+            {
+                // NOTE: even for MLs, if there is at least one boundary point,
+                // somewhere there must be another one
                 relate::set<exterior, interior, tc_t::interior, Transpose>(result);
-            //if ( tc.has_boundary )
                 relate::set<exterior, boundary, tc_t::boundary, Transpose>(result);
-        }
-        else
-        {
-            // check if there is a boundary in Geometry
-            typedef detail::relate::topology_check<Geometry> tc_t;
-            tc_t tc(geometry);
-            if ( tc.has_interior )
-                relate::set<exterior, interior, tc_t::interior, Transpose>(result);
-            if ( tc.has_boundary )
-                relate::set<exterior, boundary, tc_t::boundary, Transpose>(result);
+            }
+            else
+            {
+                // check if there is a boundary in Geometry
+                tc_t tc(geometry);
+                if ( tc.has_interior() )
+                    relate::set<exterior, interior, tc_t::interior, Transpose>(result);
+                if ( tc.has_boundary() )
+                    relate::set<exterior, boundary, tc_t::boundary, Transpose>(result);
+            }
         }
     }
 };

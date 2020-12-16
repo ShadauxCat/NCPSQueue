@@ -36,6 +36,7 @@
 #	include <BaseTsd.h>
 #endif
 
+
 #if defined(_MSC_VER) && !defined(__clang__)
 #	define NCPS_LIKELY(x) (x)
 #	define NCPS_UNLIKELY(x) (x)
@@ -50,6 +51,12 @@
 #define NCPS_CONCAT(left, right) NCPS_CONCAT_2(left, right)
 
 #define NCPS_ABORT_MSG_F(msg, ...) fprintf(stderr, msg, ## __VA_ARGS__); fputs("\n", stderr); fflush(stderr); std::terminate();
+
+#if 0
+#define DEBUG(msg, ...) fprintf(stderr, "%lu %p " msg "\n", pthread_self(), this, ## __VA_ARGS__)
+#else
+#define DEBUG(...)
+#endif
 
 #ifndef NCPS_CACHELINE_SIZE
 #	define NCPS_CACHELINE_SIZE 64
@@ -76,7 +83,7 @@ namespace NCPS
 	typedef unsigned char CachelinePad[NCPS_CACHELINE_SIZE];
 	namespace detail
 	{
-		template<typename t_ElementType, size_t t_BlockSize>
+		template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded>
 		class Buffer;
 
 		template<typename t_ElementType, typename t_AllocatorType>
@@ -130,7 +137,7 @@ namespace NCPS
 		static_assert(nextPowerOf2(uint32_t(32000)) == 32768, "nextPowerOf2 failed");
 	}
 
-	template<typename t_ElementType, size_t t_BlockSize = 8192, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template<typename t_ElementType, size_t t_BlockSize = 8192, bool t_CachePadded = false, bool t_EnableBatch = true, typename t_AllocatorType = std::allocator<t_ElementType>>
 	struct ReadReservationTicket;
 
 	template<typename t_ElementType>
@@ -139,10 +146,10 @@ namespace NCPS
 	template<typename t_ElementType>
 	struct BoundedWriteReservationTicket;
 
-	template<typename t_ElementType, size_t t_BlockSize = 8192, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template<typename t_ElementType, size_t t_BlockSize = 8192, bool t_CachePadded = false, bool t_EnableBatch = true, typename t_AllocatorType = std::allocator<t_ElementType>>
 	class ConcurrentQueue;
 
-	template<typename t_ElementType, size_t t_QueueSize, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template<typename t_ElementType, size_t t_QueueSize, bool t_CachePadded = false, typename t_AllocatorType = std::allocator<t_ElementType>>
 	class ConcurrentBoundedQueue;
 }
 
@@ -155,15 +162,26 @@ namespace NCPS
 *          the majority of the atomic operations, as the read and write position are both
 *          contained within this class.
 */
-template<typename t_ElementType, size_t t_BlockSize>
+template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded>
 class NCPS::detail::Buffer
 {
 public:
-	struct BufferElement
+	template<bool t_AddCachePadding>
+	struct BufferElement_
 	{
 		std::atomic<bool> ready;
 		t_ElementType item;
 	};
+	
+	template<>
+	struct BufferElement_<true>
+	{
+		std::atomic<bool> ready;
+		t_ElementType item;
+		unsigned char cachePad[(sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE) ? NCPS_CACHELINE_SIZE - sizeof(t_ElementType) - sizeof(std::atomic<bool>) : 1];
+	};
+	
+	using BufferElement = BufferElement_<t_CachePadded && (sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE)>;
 
 	Buffer()
 		: m_next(nullptr)
@@ -270,6 +288,11 @@ public:
 		return m_readPos.fetch_add(1, std::memory_order_acq_rel);
 	}
 
+	inline BufferElement* GetBatchForRead(ssize_t count)
+	{
+		return m_readPos.fetch_add(count, std::memory_order_acq_rel);
+	}
+
 	/**
 	* @brief   Retrieve a pointer to an element for enqueue.
 	*
@@ -284,6 +307,11 @@ public:
 	inline BufferElement* GetForWrite()
 	{
 		return m_writePos.fetch_add(1, std::memory_order_acq_rel);
+	}
+
+	inline BufferElement* GetBatchForWrite(ssize_t count)
+	{
+		return m_writePos.fetch_add(count, std::memory_order_acq_rel);
 	}
 
 	/**
@@ -359,12 +387,12 @@ private:
 *
 * @warning You must call queue.InitializeReservationTicket() on this before using it!
 */
-template<typename t_ElementType, size_t t_BlockSize, typename t_AllocatorType>
+template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch, typename t_AllocatorType>
 struct NCPS::ReadReservationTicket
 {
-	detail::Buffer<t_ElementType, t_BlockSize>* buffer{ nullptr };
-	typename detail::Buffer<t_ElementType, t_BlockSize>::BufferElement* ptr{ nullptr };
-	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_AllocatorType>* queue{ nullptr };
+	detail::Buffer<t_ElementType, t_BlockSize, t_CachePadded>* buffer{ nullptr };
+	typename detail::Buffer<t_ElementType, t_BlockSize, t_CachePadded>::BufferElement* ptr{ nullptr };
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
 	int count{ 0 };
 
 	ReadReservationTicket() {}
@@ -520,19 +548,32 @@ private:
 *                              if it's empty, rather than being freed, hence seeing double this number in memory usage after
 *                              the initial t_BlockSize reads have been completed.
 *
+* @tparam   t_CachePadded      Whether or not to add cacheline padding between each element of the queue. This can
+*                              significantly improve performance in high-contention scenarios as it prevents false sharing.
+*                              However, it comes at a significant memory usage cost, as it forces each element to take up
+*                              an entire cache line of memory (usually 64 bytes), making the a queue of chars at the default
+*                              block size take up 512KiB of memory per buffer. Note, however, that the padding is calculated such that
+*                              it only adds the difference required to pad up to 64 bytes, so the size requirements of an int64
+*                              are the same as those of a char - 512KiB per buffer. In normal usage scenarios, there will be at most
+*                              2 buffers, for a high watermark memory usage of 1MiB.
+*
+* @tparam   t_EnableBatch      When batch operations are supported, non-batch operations have to do a little extra work to play
+*                              nicely with them. If you're not using batch operations, you can gain a performance improvement
+*                              by setting this parameter to false.
+*
 * @tparam   t_AllocatorType    An allocator class compatible with std::allocator. Does not actually allocate individual elements;
-*                              rather, allocates blocks of type detail::Buffer<t_Element, t_BlockSize>, hence this class
+*                              rather, allocates blocks of type detail::Buffer<t_Element, t_BlockSize, t_CachePadded>, hence this class
 *                              must support `rebind`. For ticket-free dequeue operations, ReadReservationTickets will also
 *                              be allocated after failed reads, and deallocated on subsequent successful reads.
 */
-template<typename t_ElementType, size_t t_BlockSize, typename t_AllocatorType>
+template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch, typename t_AllocatorType>
 class NCPS::ConcurrentQueue
 {
 public:
-	using ReadReservationTicket = NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_AllocatorType>;
-	using Buffer = NCPS::detail::Buffer<t_ElementType, t_BlockSize>;
+	using ReadReservationTicket = NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>;
+	using Buffer = NCPS::detail::Buffer<t_ElementType, t_BlockSize, t_CachePadded>;
 
-	friend struct NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_AllocatorType>;
+	friend struct NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>;
 protected:
 
 	/**
@@ -550,7 +591,7 @@ protected:
 			m_reallocatingBuffer.store(false);
 		}
 	}
-private:
+protected:
 	ConcurrentQueue(ConcurrentQueue const& other) = delete;
 	ConcurrentQueue& operator=(ConcurrentQueue const& other) = delete;
 	ConcurrentQueue(ConcurrentQueue&& other) = delete;
@@ -564,6 +605,7 @@ private:
 	inline void swapToEnd_(Buffer* buffer)
 	{
 		Buffer* tail = m_tail.load(std::memory_order_acquire);
+		DEBUG("Clearing %p", buffer);
 		buffer->Clear();
 		NCPS_CONCURRENT_QUEUE_ASSERT(tail->GetNext() == nullptr);
 		NCPS_CONCURRENT_QUEUE_ASSERT(buffer != m_writeBuffer.load());
@@ -616,14 +658,14 @@ private:
 	*          keeps the code for the COMMON case small, and the cost of a function call for the uncommon case
 	*          is largely irrelevant.
 	*/
-	NCPS_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer)
+	NCPS_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t batchCount)
 	{
 		// Just because we won the lottery, though, doesn't mean we're the only ones who won.
 		// Someone else may have already claimed the prize. We need to make sure we still
 		// need to do this before we actually do it.
 		// We do that by re-fetching the buffer and element and re-doing the above check.
 		buffer = m_writeBuffer.load(std::memory_order_acquire);
-		element = buffer->GetForWrite();
+		element = buffer->GetBatchForWrite(batchCount);
 
 		if (element >= buffer->GetEnd())
 		{
@@ -658,7 +700,7 @@ private:
 			// as well so we can do this in a while loop
 			consumeUnlocked_(buffer);
 			buffer = newBuffer;
-			element = buffer->GetForWrite();
+			element = buffer->GetBatchForWrite(batchCount);
 		}
 	}
 
@@ -712,6 +754,34 @@ private:
 		return true;
 	}
 
+	NCPS_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t count)
+	{
+		buffer = m_readBuffer.load(std::memory_order_acquire);
+		element = buffer->GetBatchForRead(count);
+
+		if (element >= buffer->GetEnd())
+		{
+			Buffer* nextBuffer = buffer->GetNext();
+			if (nextBuffer == nullptr)
+			{
+				// If there isn't a new buffer to read from, we're just going to return false.
+				// In this case, we're not updating any information in the ticket.
+				// By virtue of the fact that we're here, the ticket's ptr is already null
+				// And since there's no next buffer to read from, and we don't want to allocate one when we're just reading,
+				// we're just going to keep it null and redo this work next time.
+				return false;
+			}
+			nextBuffer->SetReadPosition();
+			NCPS_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
+
+			m_readBuffer.store(nextBuffer, std::memory_order_release);
+			consumeUnlocked_(buffer);
+			buffer = nextBuffer;
+			element = buffer->GetBatchForRead(count);
+		}
+		return true;
+	}
+
 	/**
 	* @brief   Retrieve the next element to write to.
 	*
@@ -740,7 +810,7 @@ private:
 			// because we were the first to set it true.
 			if (!m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
 			{
-				fetchNextWriteBuffer_(element, buffer);
+				fetchNextWriteBuffer_(element, buffer, 1);
 				m_reallocatingBuffer.store(false, std::memory_order_release);
 			}
 		}
@@ -758,6 +828,7 @@ public:
 		, m_tail(nullptr)
 		, m_subQueue(maxConcurrentTicketlessReads)
 		, m_failedReads(0)
+		, m_outstanding(0)
 	{
 		Buffer* buffer = m_allocator.allocate(1);
 		new(buffer) Buffer();
@@ -805,6 +876,10 @@ public:
 		new(&element.item) t_ElementType(val);
 		NCPS_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
 		element.ready.store(true, std::memory_order_release);
+		if constexpr(t_EnableBatch)
+		{
+			m_outstanding.fetch_add(1, std::memory_order_release);
+		}
 	}
 
 	/**
@@ -818,6 +893,52 @@ public:
 		new(&element.item) t_ElementType(std::move(val));
 		NCPS_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
 		element.ready.store(true, std::memory_order_release);
+		if constexpr(t_EnableBatch)
+		{
+			m_outstanding.fetch_add(1, std::memory_order_release);
+		}
+	}
+
+	inline void EnqueueBatch(t_ElementType* vals, ssize_t count)
+	{
+		if constexpr(!t_EnableBatch)
+		{
+			throw std::logic_error("Batch operations are not enabled on this queue.");
+		}
+		else
+		{
+			Buffer* buffer = m_writeBuffer.load(std::memory_order_acquire);
+			typename Buffer::BufferElement* element = buffer->GetBatchForWrite(count);
+			typename Buffer::BufferElement const* end = buffer->GetEnd();
+			for(ssize_t i = 0; i < count; ++i)
+			{
+				// The write buffer may be full. If it is, it'll return a pointer past the end of the buffer.
+				// If that happens we have to retrieve or allocate a new buffer.
+				// Strictly speaking, this section violates lock-free because the allocation happens within a spin-lock.
+				// Practically speaking, this spin-lock happens so infrequently in a queue with a proper block size that
+				// it may as well never happen at all.
+				while (NCPS_UNLIKELY(element >= end))
+				{
+					DEBUG("%p is full at %p >= %p, fetching new write buffer", buffer, element, end);
+					// When we get here, we use a simple atomic boolean as a spin lock.
+					// We perform an exchange() on it - if it returns false, that means we won the lottery
+					// because we were the first to set it true.
+					if (!m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+					{
+						fetchNextWriteBuffer_(element, buffer, count - i);
+						m_reallocatingBuffer.store(false, std::memory_order_release);
+						end = buffer->GetEnd();
+					}
+					DEBUG("New buffer %p, element %p, end %p", buffer, element, end);
+				}
+				new(&element->item) t_ElementType(vals[i]);
+				element->ready.store(true, std::memory_order_release);
+				DEBUG("Enqueued %d to %p", (int)vals[i], element);
+				++element;
+			}
+			ssize_t outstanding = m_outstanding.fetch_add(count, std::memory_order_release);
+			DEBUG("New outstanding %zd", outstanding);
+		}
 	}
 
 	/**
@@ -894,6 +1015,10 @@ public:
 			val = std::move(element->item);
 			element->item.~t_ElementType();
 			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.exchange(false) == true);
+			if constexpr(t_EnableBatch)
+			{
+				m_outstanding.fetch_add(-1, std::memory_order_release);
+			}
 
 			return true;
 		}
@@ -955,7 +1080,127 @@ public:
 		}
 	}
 
-private:
+	class BatchDequeueList
+	{
+	public:
+		inline t_ElementType Next()
+		{
+			while (NCPS_UNLIKELY(m_element >= m_end))
+			{
+				DEBUG("%p is empty at %p, end=%p", m_buffer, m_element, m_end);
+				// If the buffer is exhausted, we have to acquire the next one.
+				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
+				// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
+				// we just return false; for more details on this logic, see the comments in getNextElement_()
+				for(;;)
+				{
+					if (!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+					{
+						Buffer* buffer = m_buffer;
+						if(!m_queue->fetchNextReadBuffer_(m_element, m_buffer, m_remaining))
+						{
+							m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
+							continue;
+						}
+						if(m_consumed != 0)
+						{
+							m_queue->consumeUnlocked_(buffer, m_consumed);
+							m_consumed = 0;
+						}
+						m_end = m_buffer->GetEnd();
+						m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
+						break;
+					}
+				}
+				DEBUG("Got new buffer %p at %p, end=%p", m_buffer, m_element, m_end);
+			}
+			DEBUG("Going to dequeue %d from %p, remaining batch=%zd, end=%p", (int)m_element->item, m_element, m_remaining, m_end);
+			while(!m_element->ready.load(std::memory_order_acquire)) {}
+			++m_consumed;
+			t_ElementType val(std::move(m_element->item));
+			m_element->item.~t_ElementType();
+			--m_remaining;
+			DEBUG("Dequeued %d from %p, remaining batch=%zd, end=%p", (int)val, m_element, m_remaining, m_end);
+			++m_element;
+			return val;
+		}
+
+		inline bool More()
+		{
+			return (m_remaining > 0);
+		}
+		
+		~BatchDequeueList()
+		{
+			if(m_consumed != 0)
+			{
+				m_queue->consume_(m_buffer, m_consumed);
+			}
+		}
+		
+		BatchDequeueList(){};
+
+		BatchDequeueList(ConcurrentQueue* queue, typename Buffer::BufferElement* element, typename Buffer::BufferElement const* end, Buffer* buffer, ssize_t count)
+			: m_queue(queue)
+			, m_element(element)
+			, m_end(end)
+			, m_buffer(buffer)
+			, m_remaining(count)
+			, m_count(count)
+		{}
+
+	protected:
+		BatchDequeueList(BatchDequeueList const& other) = delete;
+		BatchDequeueList(BatchDequeueList& other) = delete;
+		BatchDequeueList& operator=(BatchDequeueList const& other) = delete;
+		BatchDequeueList& operator=(BatchDequeueList& other) = delete;
+		
+		friend class ConcurrentQueue;
+		ConcurrentQueue* m_queue;
+		typename Buffer::BufferElement* m_element;
+		typename Buffer::BufferElement const* m_end;
+		Buffer* m_buffer;
+		ssize_t m_remaining{0};
+		ssize_t m_count{0};
+		ssize_t m_consumed{0};
+	};
+
+	void DequeueBatch(BatchDequeueList& result, ssize_t maxCount)
+	{
+		if constexpr(!t_EnableBatch)
+		{
+			throw std::logic_error("Batch operations are not enabled on this queue.");
+		}
+		else
+		{
+			ssize_t newOutstanding = m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount;
+			ssize_t batchSize = maxCount;
+			if(NCPS_UNLIKELY(newOutstanding < 0))
+			{
+				batchSize += newOutstanding;
+				newOutstanding = m_outstanding.fetch_sub(newOutstanding, std::memory_order_release) - newOutstanding;
+				if(NCPS_LIKELY(batchSize <= 0))
+				{
+					return;
+				}
+			}
+			Buffer* buffer = m_readBuffer.load(std::memory_order_acquire);
+			typename Buffer::BufferElement* element = buffer->GetBatchForRead(batchSize);
+			if((result.m_buffer != buffer) & (result.m_consumed != 0))
+			{
+				consume_(result.m_buffer, result.m_consumed);
+				result.m_consumed = 0;
+			}
+			result.m_queue = this;
+			result.m_element = element;
+			result.m_end = buffer->GetEnd();
+			result.m_buffer = buffer;
+			result.m_remaining = batchSize;
+			result.m_count = batchSize;
+		}
+	}
+
+protected:
 
 	NCPS_PAD_CACHELINE;
 	// Read head, not necessarily the same as the write head
@@ -977,13 +1222,15 @@ private:
 	NCPS_PAD_CACHELINE;
 	std::atomic<ssize_t> m_failedReads;
 	NCPS_PAD_CACHELINE;
+	std::atomic<ssize_t> m_outstanding;
+	NCPS_PAD_CACHELINE;
 
 
 	typename t_AllocatorType::template rebind<Buffer>::other m_allocator;
 };
 
-template<typename t_ElementType, size_t t_BlockSize, typename t_AllocatorType>
-NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_AllocatorType>::~ReadReservationTicket()
+template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch, typename t_AllocatorType>
+NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>::~ReadReservationTicket()
 {
 	if (buffer && count != 0)
 	{
@@ -1087,22 +1334,41 @@ struct NCPS::BoundedWriteReservationTicket
 *                              ever inserted, only a maximum number that can be held unread at a time -
 *                              representing overhead between enqueue and dequeue operations.
 *
+* @tparam   t_CachePadded      Whether or not to add cacheline padding between each element of the queue. This can
+*                              significantly improve performance in high-contention scenarios as it prevents false sharing.
+*                              However, it comes at a significant memory usage cost, as it forces each element to take up
+*                              an entire cache line of memory (usually 64 bytes), making the a queue of chars at a queue size of
+*                              8192 take up 512KiB of memory per buffer. Note, however, that the padding is calculated such that
+*                              it only adds the difference required to pad up to 64 bytes, so the size requirements of an int64
+*                              are the same as those of a char - 64 bytes per element.
+*
 * @tparam  t_AllocatorType     Allocator used to allocate tickets for the ticket-free enqueue
 *                              and dequeue operations. The allocators are NOT used in the operations
 *                              that do accept ticket parameters; those are alloc-free.
 */
-template<typename t_ElementType, size_t t_QueueSize, typename t_AllocatorType>
+template<typename t_ElementType, size_t t_QueueSize, bool t_CachePadded, typename t_AllocatorType>
 class NCPS::ConcurrentBoundedQueue
 {
 public:
 	using ReadReservationTicket = NCPS::BoundedReadReservationTicket<t_ElementType>;
 	using WriteReservationTicket = BoundedWriteReservationTicket<t_ElementType>;
 
-	struct BufferElement
+	template<bool t_AddCachePadding>
+	struct BufferElement_
 	{
 		std::atomic<bool> ready;
 		t_ElementType item;
 	};
+	
+	template<>
+	struct BufferElement_<true>
+	{
+		std::atomic<bool> ready;
+		t_ElementType item;
+		unsigned char cachePad[(sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE) ? NCPS_CACHELINE_SIZE - sizeof(t_ElementType) - sizeof(std::atomic<bool>) : 1];
+	};
+	
+	using BufferElement = BufferElement_<t_CachePadded && (sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE)>;
 
 	ConcurrentBoundedQueue(ssize_t maxConcurrentTicketFreeReads = 0, ssize_t maxConcurrentTicketFreeWrites = 0)
 		: m_readIdx(0)
@@ -1358,3 +1624,4 @@ private:
 	std::atomic<ssize_t> m_failedWrites;
 	NCPS_PAD_CACHELINE;
 };
+
