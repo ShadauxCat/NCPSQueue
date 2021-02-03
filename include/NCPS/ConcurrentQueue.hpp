@@ -53,7 +53,16 @@
 #define NCPS_ABORT_MSG_F(msg, ...) fprintf(stderr, msg, ## __VA_ARGS__); fputs("\n", stderr); fflush(stderr); std::terminate();
 
 #if 0
-#define DEBUG(msg, ...) fprintf(stderr, "%lu %p " msg "\n", pthread_self(), this, ## __VA_ARGS__)
+int64_t Time()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	uint64_t nanosecondResult = ts.tv_sec;
+	nanosecondResult *= 1000000000;
+	nanosecondResult += ts.tv_nsec;
+	return nanosecondResult;
+}
+#define DEBUG(msg, ...) fprintf(stderr, "%lu %lu %p " msg "\n", Time(), pthread_self(), this, ## __VA_ARGS__)
 #else
 #define DEBUG(...)
 #endif
@@ -698,6 +707,7 @@ protected:
 			// then we get a new element from it.
 			// This shouldn't be past the end, but it's theoretically possible it could be, so we reassign buffer
 			// as well so we can do this in a while loop
+			DEBUG("Consuming WRITE ref from %p", buffer);
 			consumeUnlocked_(buffer);
 			buffer = newBuffer;
 			element = buffer->GetBatchForWrite(batchCount);
@@ -775,6 +785,7 @@ protected:
 			NCPS_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
 
 			m_readBuffer.store(nextBuffer, std::memory_order_release);
+			DEBUG("Consuming READ ref from %p", buffer);
 			consumeUnlocked_(buffer);
 			buffer = nextBuffer;
 			element = buffer->GetBatchForRead(count);
@@ -873,6 +884,7 @@ public:
 	inline void Enqueue(t_ElementType const& val)
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
+		DEBUG("Enqueued %d to %p", (int)val, &element);
 		new(&element.item) t_ElementType(val);
 		NCPS_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
 		element.ready.store(true, std::memory_order_release);
@@ -890,6 +902,7 @@ public:
 	inline void Enqueue(t_ElementType&& val)
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
+		DEBUG("Enqueued %d to %p", (int)val, &element);
 		new(&element.item) t_ElementType(std::move(val));
 		NCPS_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
 		element.ready.store(true, std::memory_order_release);
@@ -919,21 +932,21 @@ public:
 				// it may as well never happen at all.
 				while (NCPS_UNLIKELY(element >= end))
 				{
-					DEBUG("%p is full at %p >= %p, fetching new write buffer", buffer, element, end);
 					// When we get here, we use a simple atomic boolean as a spin lock.
 					// We perform an exchange() on it - if it returns false, that means we won the lottery
 					// because we were the first to set it true.
 					if (!m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
 					{
+						DEBUG("%p is full at %p >= %p, fetching new write buffer", buffer, element, end);
 						fetchNextWriteBuffer_(element, buffer, count - i);
 						m_reallocatingBuffer.store(false, std::memory_order_release);
 						end = buffer->GetEnd();
+						DEBUG("New buffer %p, element %p, end %p", buffer, element, end);
 					}
-					DEBUG("New buffer %p, element %p, end %p", buffer, element, end);
 				}
 				new(&element->item) t_ElementType(vals[i]);
 				element->ready.store(true, std::memory_order_release);
-				DEBUG("Enqueued %d to %p", (int)vals[i], element);
+				DEBUG("Enqueued %d to %p->%p", (int)vals[i], buffer, element);
 				++element;
 			}
 			ssize_t outstanding = m_outstanding.fetch_add(count, std::memory_order_release);
@@ -981,6 +994,8 @@ public:
 			element = buffer->GetForRead();
 			while (NCPS_UNLIKELY(element >= buffer->GetEnd()))
 			{
+				Buffer* readBuffer = m_readBuffer.load(std::memory_order_acquire);
+				if(readBuffer->GetNext() == nullptr) { return false; }
 				// If the buffer is exhausted, we have to acquire the next one.
 				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
 				// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
@@ -1013,6 +1028,7 @@ public:
 			// Finally, we'll go ahead and pull the data from the element, destroy it, and decrement and possibly free the buffer.
 			// Then we can return true - success!
 			val = std::move(element->item);
+			DEBUG("Dequeued %d from %p", (int)val, element);
 			element->item.~t_ElementType();
 			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.exchange(false) == true);
 			if constexpr(t_EnableBatch)
@@ -1022,6 +1038,7 @@ public:
 
 			return true;
 		}
+		DEBUG("Element %p is not ready", element);
 		ticket.ptr = element;
 		return false;
 	}
@@ -1092,11 +1109,13 @@ public:
 				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
 				// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
 				// we just return false; for more details on this logic, see the comments in getNextElement_()
+				Buffer* buffer = m_buffer;
 				for(;;)
 				{
+					Buffer* readBuffer = m_queue->m_readBuffer.load(std::memory_order_acquire);
+					if(readBuffer->GetNext() == nullptr) { continue; }
 					if (!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
 					{
-						Buffer* buffer = m_buffer;
 						if(!m_queue->fetchNextReadBuffer_(m_element, m_buffer, m_remaining))
 						{
 							m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
@@ -1104,6 +1123,7 @@ public:
 						}
 						if(m_consumed != 0)
 						{
+							DEBUG("Consuming %zd from %p on swap", m_consumed, buffer);
 							m_queue->consumeUnlocked_(buffer, m_consumed);
 							m_consumed = 0;
 						}
@@ -1114,13 +1134,13 @@ public:
 				}
 				DEBUG("Got new buffer %p at %p, end=%p", m_buffer, m_element, m_end);
 			}
-			DEBUG("Going to dequeue %d from %p, remaining batch=%zd, end=%p", (int)m_element->item, m_element, m_remaining, m_end);
+			DEBUG("Going to dequeue %d from %p->%p, remaining batch=%zd, end=%p", (int)m_element->item, m_buffer, m_element, m_remaining, m_end);
 			while(!m_element->ready.load(std::memory_order_acquire)) {}
 			++m_consumed;
 			t_ElementType val(std::move(m_element->item));
 			m_element->item.~t_ElementType();
 			--m_remaining;
-			DEBUG("Dequeued %d from %p, remaining batch=%zd, end=%p", (int)val, m_element, m_remaining, m_end);
+			DEBUG("Dequeued %d from %p->%p, remaining batch=%zd, end=%p", (int)val, m_buffer, m_element, m_remaining, m_end);
 			++m_element;
 			return val;
 		}
@@ -1134,6 +1154,7 @@ public:
 		{
 			if(m_consumed != 0)
 			{
+				DEBUG("Consuming %zd from %p on destroy", m_consumed, m_buffer);
 				m_queue->consume_(m_buffer, m_consumed);
 			}
 		}
@@ -1159,7 +1180,7 @@ public:
 		ConcurrentQueue* m_queue;
 		typename Buffer::BufferElement* m_element;
 		typename Buffer::BufferElement const* m_end;
-		Buffer* m_buffer;
+		Buffer* m_buffer{nullptr};
 		ssize_t m_remaining{0};
 		ssize_t m_count{0};
 		ssize_t m_consumed{0};
@@ -1188,6 +1209,7 @@ public:
 			typename Buffer::BufferElement* element = buffer->GetBatchForRead(batchSize);
 			if((result.m_buffer != buffer) & (result.m_consumed != 0))
 			{
+				DEBUG("Consuming %zd from %p", result.m_consumed, result.m_buffer);
 				consume_(result.m_buffer, result.m_consumed);
 				result.m_consumed = 0;
 			}
