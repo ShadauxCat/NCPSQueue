@@ -92,7 +92,7 @@ namespace NCPS
 	typedef unsigned char CachelinePad[NCPS_CACHELINE_SIZE];
 	namespace detail
 	{
-		template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded>
+		template<typename t_ElementType, size_t t_BlockSize>
 		class Buffer;
 
 		template<typename t_ElementType, typename t_AllocatorType>
@@ -146,7 +146,7 @@ namespace NCPS
 		static_assert(nextPowerOf2(uint32_t(32000)) == 32768, "nextPowerOf2 failed");
 	}
 
-	template<typename t_ElementType, size_t t_BlockSize = 8192, bool t_CachePadded = false, bool t_EnableBatch = true, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template<typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, typename t_AllocatorType = std::allocator<t_ElementType>>
 	struct ReadReservationTicket;
 
 	template<typename t_ElementType>
@@ -155,10 +155,10 @@ namespace NCPS
 	template<typename t_ElementType>
 	struct BoundedWriteReservationTicket;
 
-	template<typename t_ElementType, size_t t_BlockSize = 8192, bool t_CachePadded = false, bool t_EnableBatch = true, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template<typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, typename t_AllocatorType = std::allocator<t_ElementType>>
 	class ConcurrentQueue;
 
-	template<typename t_ElementType, size_t t_QueueSize, bool t_CachePadded = false, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template<typename t_ElementType, size_t t_QueueSize, typename t_AllocatorType = std::allocator<t_ElementType>>
 	class ConcurrentBoundedQueue;
 }
 
@@ -171,26 +171,15 @@ namespace NCPS
 *          the majority of the atomic operations, as the read and write position are both
 *          contained within this class.
 */
-template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded>
+template<typename t_ElementType, size_t t_BlockSize>
 class NCPS::detail::Buffer
 {
 public:
-	template<bool t_AddCachePadding>
-	struct BufferElement_
+	struct BufferElement
 	{
 		std::atomic<bool> ready;
 		t_ElementType item;
 	};
-	
-	template<>
-	struct BufferElement_<true>
-	{
-		std::atomic<bool> ready;
-		t_ElementType item;
-		unsigned char cachePad[(sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE) ? NCPS_CACHELINE_SIZE - sizeof(t_ElementType) - sizeof(std::atomic<bool>) : 1];
-	};
-	
-	using BufferElement = BufferElement_<t_CachePadded && (sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE)>;
 
 	Buffer()
 		: m_next(nullptr)
@@ -396,12 +385,12 @@ private:
 *
 * @warning You must call queue.InitializeReservationTicket() on this before using it!
 */
-template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch, typename t_AllocatorType>
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, typename t_AllocatorType>
 struct NCPS::ReadReservationTicket
 {
-	detail::Buffer<t_ElementType, t_BlockSize, t_CachePadded>* buffer{ nullptr };
-	typename detail::Buffer<t_ElementType, t_BlockSize, t_CachePadded>::BufferElement* ptr{ nullptr };
-	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
+	detail::Buffer<t_ElementType, t_BlockSize>* buffer{ nullptr };
+	typename detail::Buffer<t_ElementType, t_BlockSize>::BufferElement* ptr{ nullptr };
+	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
 	int count{ 0 };
 
 	ReadReservationTicket() {}
@@ -557,32 +546,23 @@ private:
 *                              if it's empty, rather than being freed, hence seeing double this number in memory usage after
 *                              the initial t_BlockSize reads have been completed.
 *
-* @tparam   t_CachePadded      Whether or not to add cacheline padding between each element of the queue. This can
-*                              significantly improve performance in high-contention scenarios as it prevents false sharing.
-*                              However, it comes at a significant memory usage cost, as it forces each element to take up
-*                              an entire cache line of memory (usually 64 bytes), making the a queue of chars at the default
-*                              block size take up 512KiB of memory per buffer. Note, however, that the padding is calculated such that
-*                              it only adds the difference required to pad up to 64 bytes, so the size requirements of an int64
-*                              are the same as those of a char - 512KiB per buffer. In normal usage scenarios, there will be at most
-*                              2 buffers, for a high watermark memory usage of 1MiB.
-*
 * @tparam   t_EnableBatch      When batch operations are supported, non-batch operations have to do a little extra work to play
 *                              nicely with them. If you're not using batch operations, you can gain a performance improvement
 *                              by setting this parameter to false.
 *
 * @tparam   t_AllocatorType    An allocator class compatible with std::allocator. Does not actually allocate individual elements;
-*                              rather, allocates blocks of type detail::Buffer<t_Element, t_BlockSize, t_CachePadded>, hence this class
+*                              rather, allocates blocks of type detail::Buffer<t_Element, t_BlockSize>, hence this class
 *                              must support `rebind`. For ticket-free dequeue operations, ReadReservationTickets will also
 *                              be allocated after failed reads, and deallocated on subsequent successful reads.
 */
-template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch, typename t_AllocatorType>
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, typename t_AllocatorType>
 class NCPS::ConcurrentQueue
 {
 public:
-	using ReadReservationTicket = NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>;
-	using Buffer = NCPS::detail::Buffer<t_ElementType, t_BlockSize, t_CachePadded>;
+	using ReadReservationTicket = NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
+	using Buffer = NCPS::detail::Buffer<t_ElementType, t_BlockSize>;
 
-	friend struct NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>;
+	friend struct NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
 protected:
 
 	/**
@@ -1251,8 +1231,8 @@ protected:
 	typename t_AllocatorType::template rebind<Buffer>::other m_allocator;
 };
 
-template<typename t_ElementType, size_t t_BlockSize, bool t_CachePadded, bool t_EnableBatch, typename t_AllocatorType>
-NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_CachePadded, t_EnableBatch, t_AllocatorType>::~ReadReservationTicket()
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, typename t_AllocatorType>
+NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>::~ReadReservationTicket()
 {
 	if (buffer && count != 0)
 	{
@@ -1356,41 +1336,22 @@ struct NCPS::BoundedWriteReservationTicket
 *                              ever inserted, only a maximum number that can be held unread at a time -
 *                              representing overhead between enqueue and dequeue operations.
 *
-* @tparam   t_CachePadded      Whether or not to add cacheline padding between each element of the queue. This can
-*                              significantly improve performance in high-contention scenarios as it prevents false sharing.
-*                              However, it comes at a significant memory usage cost, as it forces each element to take up
-*                              an entire cache line of memory (usually 64 bytes), making the a queue of chars at a queue size of
-*                              8192 take up 512KiB of memory per buffer. Note, however, that the padding is calculated such that
-*                              it only adds the difference required to pad up to 64 bytes, so the size requirements of an int64
-*                              are the same as those of a char - 64 bytes per element.
-*
 * @tparam  t_AllocatorType     Allocator used to allocate tickets for the ticket-free enqueue
 *                              and dequeue operations. The allocators are NOT used in the operations
 *                              that do accept ticket parameters; those are alloc-free.
 */
-template<typename t_ElementType, size_t t_QueueSize, bool t_CachePadded, typename t_AllocatorType>
+template<typename t_ElementType, size_t t_QueueSize, typename t_AllocatorType>
 class NCPS::ConcurrentBoundedQueue
 {
 public:
 	using ReadReservationTicket = NCPS::BoundedReadReservationTicket<t_ElementType>;
 	using WriteReservationTicket = BoundedWriteReservationTicket<t_ElementType>;
 
-	template<bool t_AddCachePadding>
-	struct BufferElement_
+	struct BufferElement
 	{
 		std::atomic<bool> ready;
 		t_ElementType item;
 	};
-	
-	template<>
-	struct BufferElement_<true>
-	{
-		std::atomic<bool> ready;
-		t_ElementType item;
-		unsigned char cachePad[(sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE) ? NCPS_CACHELINE_SIZE - sizeof(t_ElementType) - sizeof(std::atomic<bool>) : 1];
-	};
-	
-	using BufferElement = BufferElement_<t_CachePadded && (sizeof(t_ElementType) + sizeof(std::atomic<bool>) < NCPS_CACHELINE_SIZE)>;
 
 	ConcurrentBoundedQueue(ssize_t maxConcurrentTicketFreeReads = 0, ssize_t maxConcurrentTicketFreeWrites = 0)
 		: m_readIdx(0)
