@@ -1,22 +1,22 @@
 # NCPSQueue
 
-[NCPSQueue](#ncpsqueue)
-	[Scaling](#scaling)
-	[Batch Enqueues and Dequeues](#batch-enqueues-and-dequeues)
-	[Bounded vs Unbounded](#bounded-vs-unbounded)
-	[Memory usage](#memory-usage)
-	[Reservation Tickets](#reservation-tickets)
-	[Ticket-Free API](#ticket-free-api)
-	[Benchmarks](#benchmarks)
-		[Testing Methodology](#testing-methodology)
-		[Results](#results)
-		[A Note on Scale](#a-note-on-scale)
-		[Graph Suffixes](#graph-suffixes)
-		[Interpretation](#interpretation)
-			[Plateau in Batch Mode](#plateau-in-batch-mode)
-			[Ephemeral vs Persistent Tickets vs No Tickets](#ephemeral-vs-persistent-tickets-vs-no-tickets)
-			[Shape of the Heatmap](#shape-of-the-heatmap)
-	[Unit Testing](#unit-testing)
+[NCPSQueue](#ncpsqueue)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Scaling](#scaling)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Batch Enqueues and Dequeues](#batch-enqueues-and-dequeues)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Bounded vs Unbounded](#bounded-vs-unbounded)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Memory usage](#memory-usage)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Reservation Tickets](#reservation-tickets)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Ticket-Free API](#ticket-free-api)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Benchmarks](#benchmarks)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[Testing Methodology](#testing-methodology)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[Results](#results)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[A Note on Scale](#a-note-on-scale)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[Graph Suffixes](#graph-suffixes)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[Interpretation](#interpretation)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[Plateau in Batch Mode](#plateau-in-batch-mode)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[Ephemeral vs Persistent Tickets vs No Tickets](#ephemeral-vs-persistent-tickets-vs-no-tickets)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[Shape of the Heatmap](#shape-of-the-heatmap)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;[Unit Testing](#unit-testing)<br>
 
 `NCPS::ConcurrentQueue` is a generic queue that comes in both bounded and non-bounded formats, and uses the concept of a ReservationTicket to provide wait-free performance in >99.987% of cases with the unbounded queue (a spin-lock must be taken when the queue needs to resize, which happens once per N enqueues, where N is a configurable bucket size - by default, 8192) and in 100% of cases with the bounded queue. A ticket-free API is also provided that offers a trade-off between usability and performance - the lock-free API reduces the concurrency guarantee to only lock-free, particularly when dequeueing from an empty queue.
 
