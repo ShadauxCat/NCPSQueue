@@ -1,6 +1,22 @@
 # NCPSQueue
 
-[TOC]
+[NCPSQueue](#ncpsqueue)
+	[Scaling](#scaling)
+	[Batch Enqueues and Dequeues](#batch-enqueues-and-dequeues)
+	[Bounded vs Unbounded](#bounded-vs-unbounded)
+	[Memory usage](#memory-usage)
+	[Reservation Tickets](#reservation-tickets)
+	[Ticket-Free API](#ticket-free-api)
+	[Benchmarks](#benchmarks)
+		[Testing Methodology](#testing-methodology)
+		[Results](#results)
+		[A Note on Scale](#a-note-on-scale)
+		[Graph Suffixes](#graph-suffixes)
+		[Interpretation](#interpretation)
+			[Plateau in Batch Mode](#plateau-in-batch-mode)
+			[Ephemeral vs Persistent Tickets vs No Tickets](#ephemeral-vs-persistent-tickets-vs-no-tickets)
+			[Shape of the Heatmap](#shape-of-the-heatmap)
+	[Unit Testing](#unit-testing)
 
 `NCPS::ConcurrentQueue` is a generic queue that comes in both bounded and non-bounded formats, and uses the concept of a ReservationTicket to provide wait-free performance in >99.987% of cases with the unbounded queue (a spin-lock must be taken when the queue needs to resize, which happens once per N enqueues, where N is a configurable bucket size - by default, 8192) and in 100% of cases with the bounded queue. A ticket-free API is also provided that offers a trade-off between usability and performance - the lock-free API reduces the concurrency guarantee to only lock-free, particularly when dequeueing from an empty queue.
 
