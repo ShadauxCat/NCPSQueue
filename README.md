@@ -33,7 +33,7 @@ As indicated by the name (N-Core Positive Scaling Concurrent Queue), `NCPS::Conc
 
 Note that the following benchmark images (and all images in the `NCPS_Unbatched_Vs_Others` benchmarks) exclude the single-producer and single-consumer cases, in order to highlight the scaling properties, which are more difficult to see when those cases are included as the low contention makes them many times faster. This is true for `NCPS::ConcurrentQueue` as well as all other tested implementations. For the curious, however, the single-producer and single-consumer cases are included in the `WithSingles` subdirectory of `NCPS_Unbatched_Vs_Others`.
 
-![Positive Scaling](benchmarks/NCPS_Unbatched_Vs_Others/char/individual_results/median/img/NCPS [NB]_char_heatmap.png)
+![Positive Scaling](benchmarks/NCPS_Unbatched_Vs_Others/char/individual_results/median/img/NCPS&#32;[NB]_char_heatmap.png)
 ![Comparison](benchmarks/NCPS_Unbatched_Vs_Others/char/comparisons/median/img/symmetrical_char.png)
 
 ## Batch Enqueues and Dequeues
@@ -184,7 +184,7 @@ So it all comes down to use case. If your use case is consumer-heavy or you expe
 
 #### Shape of the Heatmap
 
-![Positive Scaling](benchmarks/NCPS_Unbatched_Vs_Others/char/individual_results/median/img/NCPS [NB]_char_heatmap.png)
+![Positive Scaling](benchmarks/NCPS_Unbatched_Vs_Others/char/individual_results/median/img/NCPS&#32;[NB]_char_heatmap.png)
 
 One final note... when you look at this heatmap (which represents the standard configuration with a buffer size of 8192 elements and batching disabled), you will notice that the best result doesn't come from 12 producers and 12 consumers. This is because, as mentioned above, the dequeue operation is substantially faster than the enqueue operation - so much so that, even up to an imbalance of 2 consumers and 15 producers, the queue is gated on the enqueue operation. Again, as indicated above, this is only true for the persistent ticket API, but if you're able to use persistent tickets and you're finding the queue itself to be the bottleneck for your performance, consider (if you're able) increasing the number of producers relative to consumers. (Of course, not all scenarios can support this kind of tailoring.)
 
