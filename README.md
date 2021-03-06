@@ -1,6 +1,6 @@
 # NCPSQueue
 
-Reference implementation for the N-Core Positive Scaling Concurrent Queue, which provides fast performance and scalability with increased producer and consumer counts.
+[TOC]
 
 `NCPS::ConcurrentQueue` is a generic queue that comes in both bounded and non-bounded formats, and uses the concept of a ReservationTicket to provide wait-free performance in >99.987% of cases with the unbounded queue (a spin-lock must be taken when the queue needs to resize, which happens once per N enqueues, where N is a configurable bucket size - by default, 8192) and in 100% of cases with the bounded queue. A ticket-free API is also provided that offers a trade-off between usability and performance - the lock-free API reduces the concurrency guarantee to only lock-free, particularly when dequeueing from an empty queue.
 
@@ -81,7 +81,7 @@ The other queues tested were:
 
 It is the author's opinion that the "minimum" benchmarks are of little real-world value as they almost uniformly represent worst-case scenarios due to external factors; however, graphs for the minimum values are included out of a sense of completeness. The images presented in the readme are the "median" benchmarks.
 
-The source used to perform the benchmarks, as well as the python file used to generate the graphs, are available in the `benchmarks/src` directory. To build the benchmark file, you need to install `csbuild` via `pip install csbuild`, then simply run `python make.py`
+The source used to perform the benchmarks, as well as the python file used to generate the graphs, are available in the `benchmarks/src` directory. To build the benchmark file, you need to install `csbuild` via `pip install csbuild`, then simply run `python make.py`. 
 
 #### Results
 
@@ -171,3 +171,7 @@ So it all comes down to use case. If your use case is consumer-heavy or you expe
 ![Positive Scaling](benchmarks/NCPS_Unbatched_Vs_Others/char/individual_results/median/img/NCPS [NB]_char_heatmap.png)
 
 One final note... when you look at this heatmap (which represents the standard configuration with a buffer size of 8192 elements and batching disabled), you will notice that the best result doesn't come from 12 producers and 12 consumers. This is because, as mentioned above, the dequeue operation is substantially faster than the enqueue operation - so much so that, even up to an imbalance of 2 consumers and 15 producers, the queue is gated on the enqueue operation. Again, as indicated above, this is only true for the persistent ticket API, but if you're able to use persistent tickets and you're finding the queue itself to be the bottleneck for your performance, consider (if you're able) increasing the number of producers relative to consumers. (Of course, not all scenarios can support this kind of tailoring.)
+
+## Unit Testing
+
+I haven't yet written formal unit tests for the NCPS queue that can be connected to a CI system, but the queue has been thoroughly tested nonetheless. The queue's tests are built into the benchmarking application - in `main.cpp`, uncomment the `//#define VERIFY` line and the application changes into a validation application. This counts every item put into the queue and taken out of it, and validates that each item placed into the queue is retrieved no more and no less than one time. This verification suite has been run on every variant of the NCPS queue for every combination of producer and consumer threads between 1/1 and 24/24 and produced zero errors.
