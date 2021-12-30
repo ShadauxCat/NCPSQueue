@@ -815,6 +815,7 @@ class NCPS::ConcurrentQueue {
                 ++element;
             }
             ssize_t outstanding = m_outstanding.fetch_add(count, std::memory_order_release);
+            (void)outstanding;
         }
     }
 
