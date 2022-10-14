@@ -886,7 +886,7 @@ public:
 				element->ready.store(true, std::memory_order_release);
 				++element;
 			}
-			ssize_t outstanding = m_outstanding.fetch_add(count, std::memory_order_release);
+			m_outstanding.fetch_add(count, std::memory_order_release);
 		}
 	}
 
