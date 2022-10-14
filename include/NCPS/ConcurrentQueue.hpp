@@ -213,12 +213,18 @@ public:
 	/**
 	 * @brief   Resets the write position
 	 */
-	inline void SetWritePosition() { m_writePos.store(reinterpret_cast<BufferElement*>(m_buffer)); }
+	inline void SetWritePosition() 
+	{ 
+		m_writePos.store(reinterpret_cast<BufferElement*>(m_buffer)); 
+	}
 
 	/**
 	 * @brief   Resets the read position
 	 */
-	inline void SetReadPosition() { m_readPos.store(reinterpret_cast<BufferElement*>(m_buffer)); }
+	inline void SetReadPosition() 
+	{ 
+		m_readPos.store(reinterpret_cast<BufferElement*>(m_buffer)); 
+	}
 
 	/**
 	 * @brief   Set the next pointer for this buffer.
@@ -231,7 +237,10 @@ public:
 	 *
 	 * @param   next   The pointer to a newly allocated buffer
 	 */
-	inline void SetNext(Buffer* next) { m_next.store(next, std::memory_order_release); }
+	inline void SetNext(Buffer* next) 
+	{ 
+		m_next.store(next, std::memory_order_release); 
+	}
 
 	/**
 	 * @brief   Get the next pointer for this buffer.
@@ -241,7 +250,10 @@ public:
 	 *
 	 * @return  Pointer to the next buffer. If there is no next, returns nullptr.
 	 */
-	inline Buffer* GetNext() { return m_next.load(std::memory_order_acquire); }
+	inline Buffer* GetNext() 
+	{ 
+		return m_next.load(std::memory_order_acquire); 
+	}
 
 	/**
 	 * @brief   Retrieve a pointer to an element for dequeue.
@@ -261,9 +273,15 @@ public:
 	 *
 	 * @return  A pointer to an element. If the pointer is < this->GetEnd(), it is valid to read from.
 	 */
-	inline BufferElement* GetForRead() { return m_readPos.fetch_add(1, std::memory_order_acq_rel); }
+	inline BufferElement* GetForRead()
+	{
+		return m_readPos.fetch_add(1, std::memory_order_acq_rel);
+	}
 
-	inline BufferElement* GetBatchForRead(ssize_t count) { return m_readPos.fetch_add(count, std::memory_order_acq_rel); }
+	inline BufferElement* GetBatchForRead(ssize_t count)
+	{
+		return m_readPos.fetch_add(count, std::memory_order_acq_rel);
+	}
 
 	/**
 	 * @brief   Retrieve a pointer to an element for enqueue.
@@ -276,9 +294,15 @@ public:
 	 *
 	 * @return  A pointer to an element. If the pointer is < this->GetEnd(), it is valid to write to.
 	 */
-	inline BufferElement* GetForWrite() { return m_writePos.fetch_add(1, std::memory_order_acq_rel); }
+	inline BufferElement* GetForWrite()
+	{
+		return m_writePos.fetch_add(1, std::memory_order_acq_rel);
+	}
 
-	inline BufferElement* GetBatchForWrite(ssize_t count) { return m_writePos.fetch_add(count, std::memory_order_acq_rel); }
+	inline BufferElement* GetBatchForWrite(ssize_t count)
+	{
+		return m_writePos.fetch_add(count, std::memory_order_acq_rel);
+	}
 
 	/**
 	 * @brief   Get a pointer to the end of the queue. If a returned pointer is >= this value, it's not valid,
@@ -286,7 +310,10 @@ public:
 	 *
 	 * @return  A pointer to the end of the buffer.
 	 */
-	inline BufferElement const* GetEnd() const { return m_end; }
+	inline BufferElement const* GetEnd() const
+	{
+		return m_end;
+	}
 
 	/**
 	 * @brief   Decrement the ref count.
@@ -299,7 +326,10 @@ public:
 	 *
 	 * @return  The new reference count after this operation has completed. If the result is 0, the buffer should be moved to the end of the buffer list.
 	 */
-	inline ssize_t DecRef() { return m_refCount.fetch_sub(1, std::memory_order_acq_rel) - 1; }
+	inline ssize_t DecRef()
+	{
+		return m_refCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
+	}
 
 	/**
 	 * @brief   Special version of DecRef that will decrease the reference count multiple times with a single atomic operation
@@ -307,7 +337,10 @@ public:
 	 * @param   amount   the amount by which to decrement the count
 	 * @return  The new reference count after this operation has completed. If the result is 0, the buffer should be moved to the end of the buffer list.
 	 */
-	inline ssize_t DecRef(ssize_t amount) { return m_refCount.fetch_sub(amount, std::memory_order_acq_rel) - amount; }
+	inline ssize_t DecRef(ssize_t amount)
+	{
+		return m_refCount.fetch_sub(amount, std::memory_order_acq_rel) - amount;
+	}
 
 	/**
 	 * @brief   Clean up the buffer. This is NOT thread-safe.
@@ -352,10 +385,15 @@ struct NCPS::ReadReservationTicket
 	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
 	int count{ 0 };
 
-	ReadReservationTicket() {}
+	ReadReservationTicket()
+	{}
 
 	~ReadReservationTicket()
 	{
+		if(ptr)
+		{
+			NCPS_ABORT_MSG_F("Destroying a ticket while it still has a reservation!");
+		}
 		if(buffer && count != 0)
 		{
 			queue->consume_(buffer, count);
@@ -365,7 +403,10 @@ struct NCPS::ReadReservationTicket
 	ReadReservationTicket(ReadReservationTicket const& other) = delete;
 	ReadReservationTicket& operator=(ReadReservationTicket const& other) = delete;
 
-	ReadReservationTicket(ReadReservationTicket&& other) noexcept : buffer(other.buffer), ptr(other.ptr), queue(other.queue)
+	ReadReservationTicket(ReadReservationTicket&& other) noexcept 
+		: buffer(other.buffer)
+		, ptr(other.ptr)
+		, queue(other.queue)
 	{
 		other.buffer = nullptr;
 		other.ptr = nullptr;
@@ -385,12 +426,17 @@ template <typename t_ElementType, typename t_AllocatorType>
 class NCPS::detail::ReservationTicketSubQueue
 {
 public:
-	ReservationTicketSubQueue(size_t const maxConcurrentTicketlessReads) : m_buffer(maxConcurrentTicketlessReads == 0 ? nullptr : m_allocator.allocate(detail::nextPowerOf2(maxConcurrentTicketlessReads))), m_readIdx(0), m_writeIdx(0), m_mask(detail::nextPowerOf2(maxConcurrentTicketlessReads) - 1)
+	ReservationTicketSubQueue(size_t const maxConcurrentTicketlessReads) 
+		: m_buffer(maxConcurrentTicketlessReads == 0 ? nullptr : m_allocator.allocate(detail::nextPowerOf2(maxConcurrentTicketlessReads)))
+		, m_readIdx(0)
+		, m_writeIdx(0)
+		, m_mask(detail::nextPowerOf2(maxConcurrentTicketlessReads) - 1)
 	{
 		if(m_buffer)
 		{
 			memset(m_buffer, 0, maxConcurrentTicketlessReads * sizeof(*m_buffer));
 		}
+
 		for(size_t i = 0; i < maxConcurrentTicketlessReads; ++i)
 		{
 			m_buffer[i].pos = -1;
@@ -534,8 +580,7 @@ protected:
 		if(NCPS_UNLIKELY(ret == 0))
 		{
 			while(m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
-			{
-			}
+			{}
 			swapToEnd_(buffer);
 			m_reallocatingBuffer.store(false);
 		}
@@ -769,7 +814,14 @@ protected:
 	}
 
 public:
-	ConcurrentQueue(size_t const maxConcurrentTicketlessReads = 0) : m_readBuffer(nullptr), m_reallocatingBuffer(false), m_writeBuffer(nullptr), m_tail(nullptr), m_subQueue(maxConcurrentTicketlessReads), m_failedReads(0), m_outstanding(0)
+	ConcurrentQueue(size_t const maxConcurrentTicketlessReads = 0) 
+		: m_readBuffer(nullptr)
+		, m_reallocatingBuffer(false)
+		, m_writeBuffer(nullptr)
+		, m_tail(nullptr)
+		, m_subQueue(maxConcurrentTicketlessReads)
+		, m_failedReads(0)
+		, m_outstanding(0)
 	{
 		Buffer* buffer = m_allocator.allocate(1);
 		new (buffer) Buffer();
@@ -983,12 +1035,6 @@ public:
 			element = buffer->GetForRead();
 			while(NCPS_UNLIKELY(element >= buffer->GetEnd()))
 			{
-				Buffer* readBuffer = m_readBuffer.load(std::memory_order_acquire);
-				ticket.buffer = readBuffer;
-				if(readBuffer->GetNext() == nullptr)
-				{
-					return false;
-				}
 				// If the buffer is exhausted, we have to acquire the next one.
 				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
 				// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
@@ -1146,11 +1192,6 @@ public:
 				Buffer* buffer = m_buffer;
 				for(;;)
 				{
-					Buffer* readBuffer = m_queue->m_readBuffer.load(std::memory_order_acquire);
-					if(readBuffer->GetNext() == nullptr)
-					{
-						continue;
-					}
 					if(!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
 					{
 						if(!m_queue->fetchNextReadBuffer_(m_element, m_buffer, m_remaining))
@@ -1170,8 +1211,7 @@ public:
 				}
 			}
 			while(!m_element->ready.load(std::memory_order_acquire))
-			{
-			}
+			{}
 			++m_consumed;
 			t_ElementType val(std::move(m_element->item));
 			m_element->item.~t_ElementType();
@@ -1193,15 +1233,24 @@ public:
 			{
 				Next();
 			}
+
 			if(NCPS_LIKELY(m_consumed != 0))
 			{
 				m_queue->consume_(m_buffer, m_consumed);
 			}
 		}
 
-		BatchDequeueList() {};
+		BatchDequeueList()
+		{}
 
-		BatchDequeueList(ConcurrentQueue* queue, typename Buffer::BufferElement* element, typename Buffer::BufferElement const* end, Buffer* buffer, ssize_t count) : m_queue(queue), m_element(element), m_end(end), m_buffer(buffer), m_remaining(count), m_count(count) {}
+		BatchDequeueList(ConcurrentQueue* queue, typename Buffer::BufferElement* element, typename Buffer::BufferElement const* end, Buffer* buffer, ssize_t count)
+			: m_queue(queue)
+			, m_element(element)
+			, m_end(end)
+			, m_buffer(buffer)
+			, m_remaining(count)
+			, m_count(count)
+		{}
 
 	protected:
 		BatchDequeueList(BatchDequeueList const& other) = delete;
@@ -1345,12 +1394,18 @@ struct NCPS::BoundedReadReservationTicket
 {
 	void* ptr{ nullptr };
 
-	BoundedReadReservationTicket() {}
+	BoundedReadReservationTicket()
+	{}
 
 	BoundedReadReservationTicket(BoundedReadReservationTicket const& other) = delete;
 	BoundedReadReservationTicket& operator=(BoundedReadReservationTicket const& other) = delete;
 
-	BoundedReadReservationTicket(BoundedReadReservationTicket&& other) noexcept : ptr(other.ptr) { other.ptr = nullptr; }
+	BoundedReadReservationTicket(BoundedReadReservationTicket&& other) noexcept 
+		: ptr(other.ptr)
+	{
+		other.ptr = nullptr; 
+	}
+
 	BoundedReadReservationTicket& operator=(BoundedReadReservationTicket&& other) noexcept
 	{
 		ptr = other.ptr;
@@ -1369,12 +1424,18 @@ struct NCPS::BoundedWriteReservationTicket
 {
 	void* ptr{ nullptr };
 
-	BoundedWriteReservationTicket() {}
+	BoundedWriteReservationTicket()
+	{}
 
 	BoundedWriteReservationTicket(BoundedWriteReservationTicket const& other) = delete;
 	BoundedWriteReservationTicket& operator=(BoundedWriteReservationTicket const& other) = delete;
 
-	BoundedWriteReservationTicket(BoundedWriteReservationTicket&& other) noexcept : ptr(other.ptr) { other.ptr = nullptr; }
+	BoundedWriteReservationTicket(BoundedWriteReservationTicket&& other) noexcept 
+		: ptr(other.ptr) 
+	{ 
+		other.ptr = nullptr; 
+	}
+
 	BoundedWriteReservationTicket& operator=(BoundedWriteReservationTicket&& other) noexcept
 	{
 		ptr = other.ptr;
@@ -1444,7 +1505,16 @@ public:
 		t_ElementType item;
 	};
 
-	ConcurrentBoundedQueue(ssize_t maxConcurrentTicketFreeReads = 0, ssize_t maxConcurrentTicketFreeWrites = 0) : m_readIdx(0), m_writeIdx(0), m_readSubQueue(maxConcurrentTicketFreeReads), m_failedReads(0), m_writeSubQueue(maxConcurrentTicketFreeWrites), m_failedWrites(0) { memset(m_buffer, 0, c_adjustedSize * sizeof(BufferElement)); }
+	ConcurrentBoundedQueue(ssize_t maxConcurrentTicketFreeReads = 0, ssize_t maxConcurrentTicketFreeWrites = 0) 
+		: m_readIdx(0)
+		, m_writeIdx(0)
+		, m_readSubQueue(maxConcurrentTicketFreeReads)
+		, m_failedReads(0)
+		, m_writeSubQueue(maxConcurrentTicketFreeWrites)
+		, m_failedWrites(0)
+	{
+		memset(m_buffer, 0, c_adjustedSize * sizeof(BufferElement)); 
+	}
 
 	~ConcurrentBoundedQueue()
 	{
