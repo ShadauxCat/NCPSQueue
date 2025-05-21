@@ -620,6 +620,7 @@ private:
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
 class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BATCH_1>
 {
+	std::atomic<int> totalRemaining{ 0 };
 public:
 	void enqueue(size_t nElements, size_t offset)
 	{
@@ -636,18 +637,20 @@ public:
 #endif
 		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
 
-		size_t remaining = nElements;
-		
-		while(remaining > 0)
+		totalRemaining += nElements;
+		while(totalRemaining.load() > 0)
 		{
 			m_queue.DequeueBatch(batch, 1);
 			while(batch.More())
 			{
-				auto data = batch.Next();
+				t_ElementType data;
+				while(!batch.Next(data))
+				{
+				}
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--remaining;
+				--totalRemaining;
 			}
 		}
 #ifdef VERIFY
@@ -677,6 +680,7 @@ private:
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
 class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BATCH_10>
 {
+	std::atomic<int> totalRemaining{ 0 };
 public:
 	void enqueue(size_t nElements, size_t offset)
 	{
@@ -700,17 +704,20 @@ public:
 #endif
 		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
 
-		size_t remaining = nElements;
-		while(remaining > 0)
+		totalRemaining += nElements;
+		while(totalRemaining.load() > 0)
 		{
-			m_queue.DequeueBatch(batch, remaining < 10 ? remaining : 10);
+			m_queue.DequeueBatch(batch, 10);
 			while(batch.More())
 			{
-				auto data = batch.Next();
+				t_ElementType data;
+				while(!batch.Next(data))
+				{
+				}
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--remaining;
+				--totalRemaining;
 			}
 		}
 #ifdef VERIFY
@@ -739,6 +746,7 @@ private:
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
 class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BATCH_100>
 {
+	std::atomic<int> totalRemaining{ 0 };
 public:
 	void enqueue(size_t nElements, size_t offset)
 	{
@@ -762,17 +770,20 @@ public:
 #endif
 		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
 
-		size_t remaining = nElements;
-		while(remaining > 0)
+		totalRemaining += nElements;
+		while(totalRemaining.load() > 0)
 		{
-			m_queue.DequeueBatch(batch, remaining < 100 ? remaining : 100);
+			m_queue.DequeueBatch(batch, 100);
 			while(batch.More())
 			{
-				auto data = batch.Next();
+				t_ElementType data;
+				while(!batch.Next(data))
+				{
+				}
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--remaining;
+				--totalRemaining;
 			}
 		}
 #ifdef VERIFY
@@ -801,6 +812,7 @@ private:
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
 class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BATCH_1000>
 {
+	std::atomic<int> totalRemaining{ 0 };
 public:
 	void enqueue(size_t nElements, size_t offset)
 	{
@@ -824,17 +836,20 @@ public:
 #endif
 		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
 
-		size_t remaining = nElements;
-		while(remaining > 0)
+		totalRemaining += nElements;
+		while(totalRemaining.load() > 0)
 		{
-			m_queue.DequeueBatch(batch, remaining < 1000 ? remaining : 1000);
+			m_queue.DequeueBatch(batch, 1000);
 			while(batch.More())
 			{
-				auto data = batch.Next();
+				t_ElementType data;
+				while(!batch.Next(data))
+				{
+				}
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--remaining;
+				--totalRemaining;
 			}
 		}
 #ifdef VERIFY
@@ -863,6 +878,7 @@ private:
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
 class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BALANCED_BATCH_10>
 {
+	std::atomic<int> totalRemaining{ 0 };
 public:
 	void enqueue(size_t nElements, size_t offset)
 	{
@@ -886,18 +902,21 @@ public:
 #endif
 		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
 
-		size_t remaining = nElements;
+		totalRemaining += nElements;
 		const size_t batchSize = size_t(10.0/double(NUM_ELEMENTS) * double(nElements));
-		while(remaining > 0)
+		while(totalRemaining.load() > 0)
 		{
-			m_queue.DequeueBatch(batch, remaining < batchSize ? remaining : batchSize);
+			m_queue.DequeueBatch(batch, batchSize);
 			while(batch.More())
 			{
-				auto data = batch.Next();
+				t_ElementType data;
+				while(!batch.Next(data))
+				{
+				}
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--remaining;
+				--totalRemaining;
 			}
 		}
 #ifdef VERIFY
@@ -927,6 +946,7 @@ private:
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
 class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BALANCED_BATCH_100>
 {
+	std::atomic<int> totalRemaining{ 0 };
 public:
 	void enqueue(size_t nElements, size_t offset)
 	{
@@ -950,18 +970,21 @@ public:
 #endif
 		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
 
-		size_t remaining = nElements;
+		totalRemaining += nElements;
 		const size_t batchSize = size_t(100.0/double(NUM_ELEMENTS) * double(nElements));
-		while(remaining > 0)
+		while(totalRemaining.load() > 0)
 		{
-			m_queue.DequeueBatch(batch, remaining < batchSize ? remaining : batchSize);
+			m_queue.DequeueBatch(batch, batchSize);
 			while(batch.More())
 			{
-				auto data = batch.Next();
+				t_ElementType data;
+				while(!batch.Next(data))
+				{
+				}
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--remaining;
+				--totalRemaining;
 			}
 		}
 #ifdef VERIFY
@@ -992,6 +1015,7 @@ private:
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
 class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BALANCED_BATCH_1000>
 {
+	std::atomic<int> totalRemaining{ 0 };
 public:
 	void enqueue(size_t nElements, size_t offset)
 	{
@@ -1015,18 +1039,21 @@ public:
 #endif
 		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
 
-		size_t remaining = nElements;
+		totalRemaining += nElements;
 		const size_t batchSize = size_t(1000.0/double(NUM_ELEMENTS) * double(nElements));
-		while(remaining > 0)
+		while(totalRemaining.load() > 0)
 		{
-			m_queue.DequeueBatch(batch, remaining < batchSize ? remaining : batchSize);
+			m_queue.DequeueBatch(batch, batchSize);
 			while(batch.More())
 			{
-				auto data = batch.Next();
+				t_ElementType data;
+				while(!batch.Next(data))
+				{
+				}
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--remaining;
+				--totalRemaining;
 			}
 		}
 #ifdef VERIFY
@@ -1388,7 +1415,7 @@ int64_t mean(std::vector<int64_t> const& data)
 
 int64_t median(std::vector<int64_t> const& data)
 {
-	std::vector newVect(data.begin(), data.end());
+	std::vector<int64_t> newVect(data.begin(), data.end());
 	std::sort(newVect.begin(), newVect.end());
 	auto size = newVect.size();
 	if(size % 2 == 0)

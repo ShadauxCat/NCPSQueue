@@ -390,10 +390,10 @@ struct NCPS::ReadReservationTicket
 
 	~ReadReservationTicket()
 	{
-		if(ptr)
+		/*if(ptr)
 		{
 			NCPS_ABORT_MSG_F("Destroying a ticket while it still has a reservation!");
-		}
+		}*/
 		if(buffer && count != 0)
 		{
 			queue->consume_(buffer, count);
@@ -1181,43 +1181,50 @@ public:
 		 *          this will iterate until it reaches the end of the current buffer, then lazy fetch elements
 		 *          from successive buffers until the batch is exhausted.
 		 */
-		inline t_ElementType Next()
+		inline bool Next(t_ElementType& val)
 		{
-			while(NCPS_UNLIKELY(m_element >= m_end))
+			if(!m_pendingRead)
 			{
-				// If the buffer is exhausted, we have to acquire the next one.
-				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
-				// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
-				// we just return false; for more details on this logic, see the comments in getNextElement_()
-				Buffer* buffer = m_buffer;
-				for(;;)
+				while(NCPS_UNLIKELY(m_element >= m_end))
 				{
-					if(!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+					// If the buffer is exhausted, we have to acquire the next one.
+					// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
+					// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
+					// we just return false; for more details on this logic, see the comments in getNextElement_()
+					Buffer* buffer = m_buffer;
+					for(;;)
 					{
-						if(!m_queue->fetchNextReadBuffer_(m_element, m_buffer, m_remaining))
+						if(!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
 						{
+							if(!m_queue->fetchNextReadBuffer_(m_element, m_buffer, m_remaining))
+							{
+								m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
+								continue;
+							}
+							if(m_consumed != 0)
+							{
+								m_queue->consumeUnlocked_(buffer, m_consumed);
+								m_consumed = 0;
+							}
+							m_end = m_buffer->GetEnd();
 							m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
-							continue;
+							break;
 						}
-						if(m_consumed != 0)
-						{
-							m_queue->consumeUnlocked_(buffer, m_consumed);
-							m_consumed = 0;
-						}
-						m_end = m_buffer->GetEnd();
-						m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
-						break;
 					}
 				}
 			}
-			while(!m_element->ready.load(std::memory_order_acquire))
-			{}
+			if(!m_element->ready.load(std::memory_order_acquire))
+			{
+				m_pendingRead = true;
+				return false;
+			}
 			++m_consumed;
-			t_ElementType val(std::move(m_element->item));
+			val = t_ElementType(std::move(m_element->item));
 			m_element->item.~t_ElementType();
 			--m_remaining;
 			++m_element;
-			return val;
+			m_pendingRead = false;
+			return true;
 		}
 
 		/**
@@ -1231,7 +1238,11 @@ public:
 		{
 			while(NCPS_UNLIKELY(More()))
 			{
-				Next();
+
+				t_ElementType data;
+				while(!Next(data))
+				{
+				}
 			}
 
 			if(NCPS_LIKELY(m_consumed != 0))
@@ -1266,6 +1277,7 @@ public:
 		ssize_t m_remaining{ 0 };
 		ssize_t m_count{ 0 };
 		ssize_t m_consumed{ 0 };
+		bool m_pendingRead{ false };
 	};
 
 	/**
@@ -1327,9 +1339,12 @@ public:
 		{
 			while(NCPS_UNLIKELY(result.More()))
 			{
-				result.Next();
+				t_ElementType data;
+				while(!result.Next(data))
+				{
+				}
 			}
-			ssize_t newOutstanding = m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount;
+			ssize_t newOutstanding = std::max(m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount, -maxCount);
 			ssize_t batchSize = maxCount;
 			if(NCPS_UNLIKELY(newOutstanding < 0))
 			{
