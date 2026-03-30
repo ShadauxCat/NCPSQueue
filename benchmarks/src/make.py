@@ -38,7 +38,9 @@ with csbuild.Project("QueueTests", ".", [], autoDiscoverSourceFiles=False):
 
 	@csbuild.OnBuildFinished
 	def buildComplete(projects):
-		for f in glob.glob("ext/lib/{project.userData.subdir}-{project.architectureName}/*".format(project=projects[0])):
+		for f in glob.glob("external/tbb/win/bin/*".format(project=projects[0])):
+			if os.path.isdir(f):
+				continue
 			basename = os.path.basename(f)
 			dest = os.path.join(projects[0].outputDir, basename)
 			if not os.path.exists(dest):

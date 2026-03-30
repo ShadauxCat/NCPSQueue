@@ -2110,9 +2110,9 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::PERSISTENT>
 void RunTestsOnQueueType(bool useMoves = false)
 {
-	size_t totalThreads = std::thread::hardware_concurrency()/2;
-	for(size_t i = totalThreads; i <= totalThreads; ++i) {
-		for(size_t j = totalThreads; j <= totalThreads; ++j) {
+	size_t totalThreads = std::thread::hardware_concurrency();
+	for(size_t i = 1; i <= totalThreads; ++i) {
+		for(size_t j = 1; j <= totalThreads; ++j) {
 			RunTestsOnQueueTypeWithThreadCounts<t_ElementType, t_QueueType, t_TicketType>(i, j, useMoves);
 		}
 	}
