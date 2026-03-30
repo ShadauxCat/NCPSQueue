@@ -14,19 +14,27 @@ csbuild.SetUserData("subdir", platform.system())
 
 with csbuild.Toolchain("msvc"):
 	csbuild.AddCompilerFlags("/EHsc")
+	csbuild.AddCompilerFlags("/std:c++20")
+	csbuild.AddLibraryDirectories("external/tbb/win/lib")
 	
 with csbuild.ToolchainGroup("gnu"):
-	csbuild.AddCompilerFlags("-std=c++17", "-pthread")
+	csbuild.AddCompilerFlags("-std=c++20", "-pthread")
 	csbuild.AddLibraries("pthread")
+	csbuild.AddLibraryDirectories("external/tbb/gnu/lib")
 
 with csbuild.Project("QueueTests", ".", [], autoDiscoverSourceFiles=False):
 	csbuild.SetOutputDirectory(".")
 	csbuild.SetIntermediateDirectory(".csbuild/Intermediate/{userData.subdir}-{architectureName}-{targetName}")
 	csbuild.AddSourceFiles("main.cpp")
-	csbuild.AddIncludeDirectories("ext/include")
-	csbuild.AddLibraryDirectories("ext/lib/{userData.subdir}-{architectureName}")
-	csbuild.AddExcludeDirectories("ext")
 	csbuild.AddLibraries("tbb")
+	csbuild.AddIncludeDirectories("external/tbb/include", "external")
+
+	with csbuild.Target("debug"):
+		csbuild.AddLibraries("tbb12_debug")
+
+	with csbuild.Target("fastdebug", "release"):
+		csbuild.AddLibraries("tbb12")
+
 
 	@csbuild.OnBuildFinished
 	def buildComplete(projects):

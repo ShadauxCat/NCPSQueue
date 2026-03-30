@@ -10,6 +10,9 @@
 #include <math.h>
 #include <limits>
 #include <functional>
+#include <algorithm>
+#include <assert.h>
+#include <unordered_map>
 
 //#define VERIFY
 
@@ -21,6 +24,7 @@ std::mutex valueLock;
 #if defined(_WIN32)
 #define NOMINMAX
 #include <Windows.h>
+	using ssize_t = SSIZE_T;
 	static int64_t GetPerformanceFrequency()
 	{
 		LARGE_INTEGER frequency;
@@ -635,7 +639,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		while(totalRemaining.load() > 0)
@@ -665,7 +669,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -702,7 +706,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		while(totalRemaining.load() > 0)
@@ -732,7 +736,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -768,7 +772,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		while(totalRemaining.load() > 0)
@@ -798,7 +802,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -834,7 +838,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		while(totalRemaining.load() > 0)
@@ -864,7 +868,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -900,7 +904,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		const size_t batchSize = size_t(10.0/double(NUM_ELEMENTS) * double(nElements));
@@ -931,7 +935,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		const size_t batchSize = size_t(10.0/double(NUM_ELEMENTS) * double(nElements));
 		for (size_t i = 0; i < nElements; ++i)
@@ -968,7 +972,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		const size_t batchSize = size_t(100.0/double(NUM_ELEMENTS) * double(nElements));
@@ -999,7 +1003,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		const size_t batchSize = size_t(100.0/double(NUM_ELEMENTS) * double(nElements));
 		for (size_t i = 0; i < nElements; ++i)
@@ -1037,7 +1041,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		const size_t batchSize = size_t(1000.0/double(NUM_ELEMENTS) * double(nElements));
@@ -1068,7 +1072,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch;
+		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		const size_t batchSize = size_t(1000.0/double(NUM_ELEMENTS) * double(nElements));
 		for (size_t i = 0; i < nElements; ++i)
@@ -1199,12 +1203,12 @@ private:
 	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };
 
-template<typename t_ElementType, TicketType t_TicketType>
-class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, t_TicketType>
+template<typename t_ElementType, TicketType t_TicketType, bool t_EnableBatch>
+class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_EnableBatch>, t_TicketType>
 {
 public:
 	QueueWrapper()
-		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>())
+		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_EnableBatch>())
 	{}
 	
 	~QueueWrapper()
@@ -1268,7 +1272,7 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>* m_queue;
+	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, t_EnableBatch>* m_queue;
 };
 
 
@@ -1335,6 +1339,323 @@ public:
 private:
 	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>* m_queue;
 };
+
+template<typename t_ElementType>
+class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_1>
+{
+	std::atomic<int> totalRemaining{ 0 };
+public:
+	QueueWrapper()
+		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>(1024, 1024))
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		ssize_t numWritten = 0;
+		while (numWritten < nElements)
+		{
+			m_queue->EnqueueBatch(batch, std::min(ssize_t(1), (ssize_t)nElements - numWritten));
+			while(batch.More())
+			{
+				t_ElementType data = t_ElementType(offset + numWritten);
+				while (!batch.WriteNext(data))
+				{
+
+				}
+				++numWritten;
+			}
+		}
+	}
+
+	void dequeue(size_t nElements)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		totalRemaining += nElements;
+		while (totalRemaining.load() > 0)
+		{
+			m_queue->DequeueBatch(batch, 1);
+			while (batch.More())
+			{
+				t_ElementType data;
+				while (!batch.Next(data))
+				{
+				}
+#ifdef VERIFY
+				localValues[data] += 1;
+#endif
+				--totalRemaining;
+			}
+	}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->DequeueBatch(batch, 1);
+		}
+	}
+private:
+	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>* m_queue;
+};
+
+template<typename t_ElementType>
+class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_10>
+{
+	std::atomic<int> totalRemaining{ 0 };
+public:
+	QueueWrapper()
+		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>(1024, 1024))
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		ssize_t numWritten = 0;
+		while (numWritten < nElements)
+		{
+			m_queue->EnqueueBatch(batch, std::min(ssize_t(10), (ssize_t)nElements - numWritten));
+			while (batch.More())
+			{
+				t_ElementType data = t_ElementType(offset + numWritten);
+				while (!batch.WriteNext(data))
+				{
+
+				}
+				++numWritten;
+			}
+		}
+	}
+
+	void dequeue(size_t nElements)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		totalRemaining += nElements;
+		while (totalRemaining.load() > 0)
+		{
+			m_queue->DequeueBatch(batch, 10);
+			while (batch.More())
+			{
+				t_ElementType data;
+				while (!batch.Next(data))
+				{
+				}
+#ifdef VERIFY
+				localValues[data] += 1;
+#endif
+				--totalRemaining;
+			}
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->DequeueBatch(batch, 10);
+		}
+	}
+private:
+	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>* m_queue;
+};
+
+template<typename t_ElementType>
+class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_100>
+{
+	std::atomic<int> totalRemaining{ 0 };
+public:
+	QueueWrapper()
+		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>(1024, 1024))
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		ssize_t numWritten = 0;
+		while (numWritten < nElements)
+		{
+			m_queue->EnqueueBatch(batch, std::min(ssize_t(100), (ssize_t)nElements - numWritten));
+			while (batch.More())
+			{
+				t_ElementType data = t_ElementType(offset + numWritten);
+				while (!batch.WriteNext(data))
+				{
+
+				}
+				++numWritten;
+			}
+		}
+	}
+
+	void dequeue(size_t nElements)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		totalRemaining += nElements;
+		while (totalRemaining.load() > 0)
+		{
+			m_queue->DequeueBatch(batch, 100);
+			while (batch.More())
+			{
+				t_ElementType data;
+				while (!batch.Next(data))
+				{
+				}
+#ifdef VERIFY
+				localValues[data] += 1;
+#endif
+				--totalRemaining;
+			}
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->DequeueBatch(batch, 100);
+		}
+	}
+private:
+	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>* m_queue;
+};
+
+template<typename t_ElementType>
+class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_1000>
+{
+	std::atomic<int> totalRemaining{ 0 };
+public:
+	QueueWrapper()
+		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>(1024, 1024))
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		ssize_t numWritten = 0;
+		while (numWritten < nElements)
+		{
+			m_queue->EnqueueBatch(batch, std::min(ssize_t(1000), (ssize_t)nElements - numWritten));
+			while (batch.More())
+			{
+				t_ElementType data = t_ElementType(offset + numWritten);
+				while (!batch.WriteNext(data))
+				{
+
+				}
+				++numWritten;
+			}
+		}
+	}
+
+	void dequeue(size_t nElements)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		totalRemaining += nElements;
+		while (totalRemaining.load() > 0)
+		{
+			m_queue->DequeueBatch(batch, 1000);
+			while (batch.More())
+			{
+				t_ElementType data;
+				while (!batch.Next(data))
+				{
+				}
+#ifdef VERIFY
+				localValues[data] += 1;
+#endif
+				--totalRemaining;
+			}
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		typename NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->DequeueBatch(batch, 1000);
+		}
+	}
+private:
+	NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>* m_queue;
+};
+
 template<typename t_Type>
 struct TypeName
 {
@@ -1789,9 +2110,9 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::PERSISTENT>
 void RunTestsOnQueueType(bool useMoves = false)
 {
-	size_t totalThreads = std::thread::hardware_concurrency();
-	for(size_t i = 1; i <= totalThreads; ++i) {
-		for(size_t j = 1; j <= totalThreads; ++j) {
+	size_t totalThreads = std::thread::hardware_concurrency()/2;
+	for(size_t i = totalThreads; i <= totalThreads; ++i) {
+		for(size_t j = totalThreads; j <= totalThreads; ++j) {
 			RunTestsOnQueueTypeWithThreadCounts<t_ElementType, t_QueueType, t_TicketType>(i, j, useMoves);
 		}
 	}
@@ -1801,7 +2122,7 @@ void RunTestsOnQueueType(bool useMoves = false)
 template<typename t_ElementType, typename t_QueueType>
 void PrintEmpty()
 {
-	size_t totalThreads = std::thread::hardware_concurrency();
+	size_t totalThreads = std::thread::hardware_concurrency()/2;
 	for (size_t i = 1; i <= totalThreads; ++i) {
 		for (size_t j = 1; j <= totalThreads; ++j) {
 			std::cout << TypeName<t_QueueType>::GetName(false, TicketType::PERSISTENT) << "\t" << 0 << "\t" << 0 << "\t" << 0 << "\t" << 0 << std::endl;
@@ -1817,7 +2138,7 @@ void RunTestsOnElementType()
 	RunTestsOnQueueType<t_ElementType, ext_1024cores::mpmc_bounded_queue<t_ElementType>>();
 	RunTestsOnQueueType<t_ElementType, tbb::concurrent_bounded_queue<t_ElementType>>();
 	RunTestsOnQueueType<t_ElementType, tbb::concurrent_queue<t_ElementType>>();
-	if constexpr(t_SupportsBoost)
+	if constexpr (t_SupportsBoost)
 	{
 		RunTestsOnQueueType<t_ElementType, boost::lockfree::queue<t_ElementType>>();
 	}
@@ -1851,7 +2172,12 @@ void RunTestsOnElementType()
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
 
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_1>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_10>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_100>();
+	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH_1000>();
 	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
 }
 

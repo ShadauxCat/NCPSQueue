@@ -86,7 +86,7 @@ namespace NCPS
 		template <typename t_ElementType, size_t t_BlockSize>
 		class Buffer;
 
-		template <typename t_ElementType, typename t_AllocatorType>
+		template <typename t_ElementType, template<typename> typename t_AllocatorType>
 		class ReservationTicketSubQueue;
 
 		// These functions collectively find the next power of 2 of a number
@@ -137,7 +137,7 @@ namespace NCPS
 		static_assert(nextPowerOf2(uint32_t(32000)) == 32768, "nextPowerOf2 failed");
 	}  // namespace detail
 
-	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, template<typename> typename t_AllocatorType = std::allocator>
 	struct ReadReservationTicket;
 
 	template <typename t_ElementType>
@@ -146,10 +146,10 @@ namespace NCPS
 	template <typename t_ElementType>
 	struct BoundedWriteReservationTicket;
 
-	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, template<typename> typename t_AllocatorType = std::allocator>
 	class ConcurrentQueue;
 
-	template <typename t_ElementType, size_t t_QueueSize, typename t_AllocatorType = std::allocator<t_ElementType>>
+	template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch = false, template<typename> typename t_AllocatorType = std::allocator>
 	class ConcurrentBoundedQueue;
 }  // namespace NCPS
 
@@ -377,7 +377,7 @@ private:
  *
  * @warning You must call queue.InitializeReservationTicket() on this before using it!
  */
-template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, typename t_AllocatorType>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
 struct NCPS::ReadReservationTicket
 {
 	detail::Buffer<t_ElementType, t_BlockSize>* buffer{ nullptr };
@@ -422,7 +422,7 @@ struct NCPS::ReadReservationTicket
 	}
 };
 
-template <typename t_ElementType, typename t_AllocatorType>
+template <typename t_ElementType, template<typename> typename t_AllocatorType>
 class NCPS::detail::ReservationTicketSubQueue
 {
 public:
@@ -505,7 +505,7 @@ private:
 		t_ElementType item;
 	};
 
-	typename t_AllocatorType::template rebind<Element>::other m_allocator;
+	typename t_AllocatorType<Element> m_allocator;
 
 	Element* m_buffer;
 	NCPS_PAD_CACHELINE;
@@ -559,7 +559,7 @@ private:
  *                              must support `rebind`. For ticket-free dequeue operations, ReadReservationTickets will also
  *                              be allocated after failed reads, and deallocated on subsequent successful reads.
  */
-template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, typename t_AllocatorType>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
 class NCPS::ConcurrentQueue
 {
 public:
@@ -1251,19 +1251,35 @@ public:
 			}
 		}
 
+		BatchDequeueList(BatchDequeueList&& other)
+			: m_queue(other.m_queue)
+			, m_element(other.m_element)
+			, m_end(other.m_end)
+			, m_buffer(other.m_buffer)
+			, m_remaining(other.m_remaining)
+			, m_count(other.m_count)
+			, m_consumed(other.m_consumed)
+			, m_pendingRead(other.m_pendingRead)
+		{
+			other.m_queue = nullptr;
+			other.m_element = nullptr;
+			other.m_end = nullptr;
+			other.m_buffer = nullptr;
+			other.m_remaining = 0;
+			other.m_count = 0;
+			other.m_consumed = 0;
+			other.m_pendingRead = false;
+		}
+
+	protected:
+
 		BatchDequeueList()
 		{}
 
-		BatchDequeueList(ConcurrentQueue* queue, typename Buffer::BufferElement* element, typename Buffer::BufferElement const* end, Buffer* buffer, ssize_t count)
+		BatchDequeueList(ConcurrentQueue* queue)
 			: m_queue(queue)
-			, m_element(element)
-			, m_end(end)
-			, m_buffer(buffer)
-			, m_remaining(count)
-			, m_count(count)
 		{}
 
-	protected:
 		BatchDequeueList(BatchDequeueList const& other) = delete;
 		BatchDequeueList(BatchDequeueList& other) = delete;
 		BatchDequeueList& operator=(BatchDequeueList const& other) = delete;
@@ -1279,6 +1295,11 @@ public:
 		ssize_t m_consumed{ 0 };
 		bool m_pendingRead{ false };
 	};
+
+	BatchDequeueList CreateDequeueList()
+	{
+		return BatchDequeueList(this);
+	}
 
 	/**
 	 * @brief Retrieve multiple items from the queue. When maxCount is more than 1 or 2, DequeueBatch can offer orders of
@@ -1362,7 +1383,6 @@ public:
 				consume_(result.m_buffer, result.m_consumed);
 				result.m_consumed = 0;
 			}
-			result.m_queue = this;
 			result.m_element = element;
 			result.m_end = buffer->GetEnd();
 			result.m_buffer = buffer;
@@ -1396,7 +1416,7 @@ protected:
 	std::atomic<ssize_t> m_outstanding;
 	NCPS_PAD_CACHELINE;
 
-	typename t_AllocatorType::template rebind<Buffer>::other m_allocator;
+	typename t_AllocatorType<Buffer> m_allocator;
 };
 
 /**
@@ -1507,7 +1527,7 @@ struct NCPS::BoundedWriteReservationTicket
  *                              and dequeue operations. The allocators are NOT used in the operations
  *                              that do accept ticket parameters; those are alloc-free.
  */
-template <typename t_ElementType, size_t t_QueueSize, typename t_AllocatorType>
+template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
 class NCPS::ConcurrentBoundedQueue
 {
 public:
@@ -1527,6 +1547,7 @@ public:
 		, m_failedReads(0)
 		, m_writeSubQueue(maxConcurrentTicketFreeWrites)
 		, m_failedWrites(0)
+		, m_outstanding(0)
 	{
 		memset(m_buffer, 0, c_adjustedSize * sizeof(BufferElement)); 
 	}
@@ -1579,6 +1600,10 @@ public:
 
 			// ...then we signal that the element is ready to read and return true.
 			element->ready.store(true, std::memory_order_release);
+			if constexpr (t_EnableBatch)
+			{
+				m_outstanding.fetch_add(1, std::memory_order_release);
+			}
 			return true;
 		}
 		ticket.ptr = element;
@@ -1613,6 +1638,10 @@ public:
 			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
 
 			element->ready.store(true, std::memory_order_release);
+			if constexpr (t_EnableBatch)
+			{
+				m_outstanding.fetch_add(1, std::memory_order_release);
+			}
 			return true;
 		}
 		ticket.ptr = element;
@@ -1638,6 +1667,11 @@ public:
 		{
 			size_t idx = m_readIdx.fetch_add(1, std::memory_order_acq_rel);
 			element = m_buffer + (idx & (c_adjustedSize - 1));
+		}
+
+		if constexpr (t_EnableBatch)
+		{
+			m_outstanding.fetch_add(-1, std::memory_order_relaxed);
 		}
 
 		bool ready = element->ready.load(std::memory_order_acquire);
@@ -1754,6 +1788,296 @@ public:
 		}
 	}
 
+	class BatchDequeueList
+	{
+	public:
+		/**
+		 * @brief Fetch the next element in the batch
+		 *
+		 * @details Normally, this function amounts to a pointer increment and a copy constructor and destructor
+		 *          for t_ElementType. However, in scenarios where a batch spans the boundaries of two buffers,
+		 *          this will iterate until it reaches the end of the current buffer, then lazy fetch elements
+		 *          from successive buffers until the batch is exhausted.
+		 */
+		inline bool Next(t_ElementType& val)
+		{
+			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
+			if (!element->ready.load(std::memory_order_acquire))
+			{
+				return false;
+			}
+			val = t_ElementType(std::move(element->item));
+			element->item.~t_ElementType();
+			--m_remaining;
+			++m_idx;
+			return true;
+		}
+
+		/*
+		 * @brief Check if there are more items to iterate.
+		 *
+		 * @return true if there are elements left in the batch, false if the batch is exhausted
+		 */
+		inline bool More() { return (m_remaining > 0); }
+
+		~BatchDequeueList()
+		{
+			while (NCPS_UNLIKELY(More()))
+			{
+				t_ElementType data;
+				while (!Next(data))
+				{
+				}
+			}
+		}
+
+		BatchDequeueList(BatchDequeueList&& other)
+			: m_idx(other.m_idx)
+			, m_buffer(other.m_buffer)
+			, m_remaining(other.m_remaining)
+			, m_count(other.m_count)
+		{
+			other.m_idx = 0;
+			other.m_buffer = nullptr;
+			other.m_remaining = 0;
+			other.m_count = 0;
+		}
+
+	protected:
+		friend class ConcurrentBoundedQueue;
+		BatchDequeueList()
+		{}
+
+		BatchDequeueList(BufferElement* buffer)
+			: m_buffer(buffer)
+		{}
+
+		BatchDequeueList(BatchDequeueList const& other) = delete;
+		BatchDequeueList(BatchDequeueList& other) = delete;
+		BatchDequeueList& operator=(BatchDequeueList const& other) = delete;
+		BatchDequeueList& operator=(BatchDequeueList& other) = delete;
+
+		size_t m_idx;
+		BufferElement* m_buffer;
+		ssize_t m_remaining{ 0 };
+		ssize_t m_count{ 0 };
+	};
+
+	class BatchEnqueueList
+	{
+	public:
+		inline bool WriteNext(t_ElementType&& val)
+		{
+			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
+			if (element->ready.load(std::memory_order_acquire))
+			{
+				return false;
+			}
+
+			new (&element->item) t_ElementType(std::move(val));
+			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
+
+			element->ready.store(true, std::memory_order_release);
+
+			--m_remaining;
+			++m_idx;
+			return true;
+		}
+
+		inline bool WriteNext(t_ElementType const& val)
+		{
+			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
+
+			if (element->ready.load(std::memory_order_acquire))
+			{
+				return false;
+			}
+
+			new (&element->item) t_ElementType(val);
+			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
+
+			element->ready.store(true, std::memory_order_release);
+
+			--m_remaining;
+			++m_idx;
+			return true;
+		}
+
+		/*
+		 * @brief Check if there are more items to iterate.
+		 *
+		 * @return true if there are elements left in the batch, false if the batch is exhausted
+		 */
+		inline bool More()
+		{
+			return (m_remaining > 0);
+		}
+
+		~BatchEnqueueList()
+		{
+			while (NCPS_UNLIKELY(More()))
+			{
+				t_ElementType data;
+				while (!WriteNext(data))
+				{
+				}
+			}
+		}
+
+		BatchEnqueueList(BatchEnqueueList&& other)
+			: m_idx(other.m_idx)
+			, m_buffer(other.m_buffer)
+			, m_remaining(other.m_remaining)
+			, m_count(other.m_count)
+		{
+			other.m_idx = 0;
+			other.m_buffer = nullptr;
+			other.m_remaining = 0;
+			other.m_count = 0;
+		}
+
+	protected:
+		friend class ConcurrentBoundedQueue;
+		BatchEnqueueList()
+		{}
+
+		BatchEnqueueList(BufferElement* buffer)
+			: m_buffer(buffer)
+		{}
+
+		BatchEnqueueList(BatchEnqueueList const& other) = delete;
+		BatchEnqueueList(BatchEnqueueList& other) = delete;
+		BatchEnqueueList& operator=(BatchEnqueueList const& other) = delete;
+		BatchEnqueueList& operator=(BatchEnqueueList& other) = delete;
+
+		size_t m_idx{ 0 };
+		BufferElement* m_buffer;
+		ssize_t m_remaining{ 0 };
+		ssize_t m_count{ 0 };
+	};
+
+	BatchEnqueueList CreateEnqueueList()
+	{
+		return BatchEnqueueList(m_buffer);
+	}
+
+	BatchDequeueList CreateDequeueList()
+	{
+		return BatchDequeueList(m_buffer);
+	}
+
+
+	void EnqueueBatch(BatchEnqueueList& enqueueList, ssize_t count)
+	{
+		if constexpr (!t_EnableBatch)
+		{
+			throw std::logic_error("Batch operations are not enabled on this queue.");
+		}
+		else
+		{
+			ssize_t newOutstanding = std::min(m_outstanding.fetch_add(count, std::memory_order_acq_rel) + count, (ssize_t)t_QueueSize + count);
+			ssize_t batchSize = count;
+			ssize_t overflow = newOutstanding - t_QueueSize;
+			if (NCPS_UNLIKELY(overflow > 0))
+			{
+				batchSize -= overflow;
+				newOutstanding = m_outstanding.fetch_sub(overflow, std::memory_order_release) - overflow;
+				if (NCPS_LIKELY(batchSize <= 0))
+				{
+					return;
+				}
+			}
+
+			size_t startIdx = m_writeIdx.fetch_add(batchSize, std::memory_order_acq_rel);
+			enqueueList.m_idx = startIdx;
+			enqueueList.m_count = batchSize;
+			enqueueList.m_remaining = batchSize;
+		}
+	}
+
+	/**
+	 * @brief Retrieve multiple items from the queue. When maxCount is more than 1 or 2, DequeueBatch can offer orders of
+	 *        magnitude greater performance than either Dequeue option.
+	 *
+	 * @details In contrast with the other two Dequeue() options, DequeueBatch() takes advantage of the contiguous storage
+	 *          structure of NCPSQueue to reduce contention by allowing the retrieval of multiple items from the queue with
+	 *          only a single atomic increment. A second atomic operation is used to keep track of how many elements it's allowed
+	 *          to read to ensure it doesn't over-consume the queue. When it does, a third atomic operation is used to correct.
+	 *
+	 *          However, while the additional atomic operations on the queue result in slower performance for individual item
+	 *          dequeues, this is vastly made up for when reading larger numbers of items by reducing the contention on each
+	 *          individual read - while 100 normal dequeue operations would involve a total of 100 atomic increments on contentuous
+	 *          variables (when batching is disabled), a batch read of 100 items involves a total of 2 atomic increments on
+	 *          contentuous variables in the optimistic case, and 3 in the pessimistic case. Additionally, since multiple elements
+	 *          are retrieved in a single function call, the user code can spend more time actually processing the elements it has
+	 *          retrieved, which means there are fewer overall function calls on the queue, and thus, those 3 operations are far
+	 *          less likely to actually experience contention resulting in cache misses, and the code doing the processing is able
+	 *          to safely rely on the cache locality of the data it receives without concern for losing that locality to contention
+	 *          while iterating them.
+	 *
+	 *          There are, however, drawbacks to the batch API.
+	 *
+	 *          First, simply the act of enabling batch enqueue and dequeue makes the non-batched operations a little bit slower,
+	 *          as it adds a requirement for them to update the outstanding count in order for batched operations to function properly
+	 *          when the two are mixed.
+	 *
+	 *          Second, batched operations with a maxCount of 1 are slower than ticketed operations. In general, batch size of 1 will see
+	 *          close to the same performance as the ticket-free API for successful dequeues when batch mode is enabled, and will be slightly
+	 *          slower than ticket-free dequeues with batch mode disabled. However...
+	 *
+	 *          Third (to be taken with a LARGE grain of salt), while successful dequeues in batch mode are extremely fast,
+	 *          dequeue-from-empty can be much slower than other options depending on your use case. If you're doing other processing
+	 *          when the queue is empty, or sleeping when the queue is empty, and thus keeping contention low, you'll likely see
+	 *          dequeue-from-empty performing as well as a successful dequeue. But if your threads are all looping on trying to read
+	 *          from the empty queue, the number of attempts they can do per second will be dramatically lower due to the increased
+	 *          contention this causes. (However, if you're in that situation, you're not really DOING anything, so practically
+	 *          speaking... does it really matter that you're doing less of nothing?)
+	 *
+	 *          Finally, mixing the normal API and the batch API can lead to unexpected behavior. The non-batch API removes items from
+	 *          the pool that the batch API can read from *even when their reads fail*, so if you perform a non-batch read that returns false,
+	 *          then enqueue an item, then attempt to dequeue that item using the batch API, you will find the batch API returns 0 items
+	 *          instead of the expected 1, because that item was already reserved by the non-batch API before it was written.
+	 *          See the documentation for Dequeue(t_ElementType& val, ReadReservationTicket& ticket) for more information.
+	 *
+	 * @param   result    Out variable in which to store the retrieved batch data. May safely be reused once all items have been consumed.
+	 *
+	 * @param   maxCount  Maximum number of elements to retrieve. If the full requested amount doesn't exist in the queue, a partial result
+	 *                    will be returned.
+	 */
+	void DequeueBatch(BatchDequeueList& result, ssize_t maxCount)
+	{
+		if constexpr (!t_EnableBatch)
+		{
+			throw std::logic_error("Batch operations are not enabled on this queue.");
+		}
+		else
+		{
+			while (NCPS_UNLIKELY(result.More()))
+			{
+				t_ElementType data;
+				while (!result.Next(data))
+				{
+				}
+			}
+			ssize_t newOutstanding = std::max(m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount, -maxCount);
+			ssize_t batchSize = maxCount;
+			if (NCPS_UNLIKELY(newOutstanding < 0))
+			{
+				batchSize += newOutstanding;
+				newOutstanding = m_outstanding.fetch_sub(newOutstanding, std::memory_order_release) - newOutstanding;
+				if (NCPS_LIKELY(batchSize <= 0))
+				{
+					return;
+				}
+			}
+
+			size_t startIdx = m_readIdx.fetch_add(batchSize, std::memory_order_acq_rel);
+			result.m_idx = startIdx;
+			result.m_count = batchSize;
+			result.m_remaining = batchSize;
+		}
+	}
+
 private:
 	constexpr static size_t c_adjustedSize = detail::nextPowerOf2(t_QueueSize);
 
@@ -1771,5 +2095,7 @@ private:
 	detail::ReservationTicketSubQueue<WriteReservationTicket, t_AllocatorType> m_writeSubQueue;
 	NCPS_PAD_CACHELINE;
 	std::atomic<ssize_t> m_failedWrites;
+	NCPS_PAD_CACHELINE;
+	std::atomic<ssize_t> m_outstanding;
 	NCPS_PAD_CACHELINE;
 };

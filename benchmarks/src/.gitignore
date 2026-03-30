@@ -5,3 +5,5 @@
 /*.exe
 /*.dylib
 /.csbuild
+/Solutions/
+/_buildenv/

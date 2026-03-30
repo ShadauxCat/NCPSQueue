@@ -1,0 +1,16 @@
+# File and directory patterns
+*.pyc
+*.py~
+*.artifacts
+**/.idea
+.csbuild
+/__pycache__/
+/venv*/
+build
+csbuild.egg-info
+dist
+
+# Specific files
+failedLints.txt
+result.xml
+MANIFEST
