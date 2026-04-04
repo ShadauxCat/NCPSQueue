@@ -505,7 +505,7 @@ private:
 		t_ElementType item;
 	};
 
-	typename t_AllocatorType<Element> m_allocator;
+	t_AllocatorType<Element> m_allocator;
 
 	Element* m_buffer;
 	NCPS_PAD_CACHELINE;
@@ -1416,7 +1416,7 @@ protected:
 	std::atomic<ssize_t> m_outstanding;
 	NCPS_PAD_CACHELINE;
 
-	typename t_AllocatorType<Buffer> m_allocator;
+	t_AllocatorType<Buffer> m_allocator;
 };
 
 /**
