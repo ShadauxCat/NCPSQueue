@@ -13,7 +13,7 @@ csbuild.SetUserData("subdir", platform.system())
 
 
 with csbuild.Toolchain("msvc"):
-	csbuild.AddCompilerFlags("/EHsc")
+	csbuild.AddCompilerFlags("/EHsc", "/bigobj")
 	csbuild.AddCompilerFlags("/std:c++20")
 	csbuild.AddLibraryDirectories("external/tbb/win/lib")
 	
@@ -22,12 +22,16 @@ with csbuild.ToolchainGroup("gnu"):
 	csbuild.AddLibraries("pthread")
 	csbuild.AddLibraryDirectories("external/tbb/gnu/lib")
 
-with csbuild.Project("QueueTests", ".", [], autoDiscoverSourceFiles=False):
-	csbuild.SetOutputDirectory(".")
+with csbuild.Project("QueueTests", "src", []):
+	csbuild.SetOutputDirectory("bin")
 	csbuild.SetIntermediateDirectory(".csbuild/Intermediate/{userData.subdir}-{architectureName}-{targetName}")
-	csbuild.AddSourceFiles("main.cpp")
 	csbuild.AddLibraries("tbb")
-	csbuild.AddIncludeDirectories("external/tbb/include", "external")
+	csbuild.AddIncludeDirectories(
+		"external/tbb/include", 
+		"external",
+		"external/ConcurrencyFreaks/CPP/queues",
+		"external/wCQ"
+	)
 
 	with csbuild.Target("debug"):
 		csbuild.AddLibraries("tbb12_debug")

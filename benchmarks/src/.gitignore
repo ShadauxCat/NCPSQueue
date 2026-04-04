@@ -7,3 +7,5 @@
 /.csbuild
 /Solutions/
 /_buildenv/
+/bin/
+/_buildenv-wsl/
