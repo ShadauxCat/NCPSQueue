@@ -1,9 +1,6 @@
-[submodule "benchmarks/src/external/wCQ"]
-	path = benchmarks/src/external/wCQ
-	url = https://github.com/rusnikola/lfqueue.git
-[submodule "benchmarks/src/external/Disruptor-cpp"]
-	path = benchmarks/src/external/Disruptor-cpp
-	url = https://github.com/Abc-Arbitrage/Disruptor-cpp
 [submodule "benchmarks/src/external/ConcurrencyFreaks"]
 	path = benchmarks/src/external/ConcurrencyFreaks
 	url = https://github.com/pramalhe/ConcurrencyFreaks.git
+[submodule "benchmarks/src/external/xenium"]
+	path = benchmarks/src/external/xenium
+	url = https://github.com/mpoeter/xenium.git

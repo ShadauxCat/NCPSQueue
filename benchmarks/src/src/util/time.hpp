@@ -62,3 +62,28 @@ void timeFn(std::function<void()> fn)
 	fn();
 	timer.store(SteadyNow());
 }
+
+
+template<typename t_QueueWrapper>
+void latencyTestPing(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2)
+{
+	++started;
+	while (timer.load() == -1) {}
+	for (size_t i = 0; i < NUM_ELEMENTS; ++i)
+	{
+		wrapper1->enqueue(1, 0);
+		wrapper2->dequeue(1);
+	}
+	timer.store(SteadyNow());
+}
+
+template<typename t_QueueWrapper>
+void latencyTestPong(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2)
+{
+	++started;
+	for (size_t i = 0; i < NUM_ELEMENTS; ++i)
+	{
+		wrapper1->dequeue(1);
+		wrapper2->enqueue(1, 0);
+	}
+}

@@ -3,6 +3,12 @@
 // Brings in VERIFY macro to be used by all queue implementations
 #include "config.hpp"
 
+#if DO_VERIFICATION
+#define VERIFY
+std::unordered_map<int, int> values;
+std::mutex valueLock;
+#endif
+
 enum class TicketType
 {
 	NONE,

@@ -30,7 +30,7 @@ with csbuild.Project("QueueTests", "src", []):
 		"external/tbb/include", 
 		"external",
 		"external/ConcurrencyFreaks/CPP/queues",
-		"external/wCQ"
+		"external/xenium"
 	)
 
 	with csbuild.Target("debug"):

@@ -1,17 +1,17 @@
 #pragma once
 
-#include "../../../../include/NCPS/ConcurrentQueue.hpp"
+#include "../../../../include/BEFAST/ConcurrentQueue.hpp"
 #include "../QueueWrapper.hpp"
 #include <thread>
 
-#define HAS_NCPS_UNBOUNDED
+#define HAS_BEFAST_UNBOUNDED
 
 #if defined(_WIN32)
 using ssize_t = SSIZE_T;
 #endif
 
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::PERSISTENT>
+class QueueWrapper<BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::PERSISTENT>
 {
 public:
 	void enqueue(size_t nElements, size_t offset)
@@ -35,7 +35,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
+		typename BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -58,7 +58,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
+		typename BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -68,11 +68,11 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
+	BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };
 
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch, size_t t_BatchSize>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BATCH, t_BatchSize>
+class QueueWrapper<BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BATCH, t_BatchSize>
 {
 	std::atomic<int> totalRemaining{ 0 };
 public:
@@ -96,7 +96,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
+		typename BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		totalRemaining += nElements;
 		while (totalRemaining.load() > 0)
@@ -126,7 +126,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
+		typename BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::BatchDequeueList batch = m_queue.CreateDequeueList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -134,11 +134,11 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
+	BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };
 
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::EPHEMERAL>
+class QueueWrapper<BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::EPHEMERAL>
 {
 public:
 	void enqueue(size_t nElements, size_t offset)
@@ -165,7 +165,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
+			typename BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
 			m_queue.InitializeReservationTicket(ticket);
 			while (!m_queue.Dequeue(data, ticket)) {};
 #ifdef VERIFY
@@ -184,7 +184,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
+		typename BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -194,11 +194,11 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
+	BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };
 
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
-class QueueWrapper<NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::NONE>
+class QueueWrapper<BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
@@ -253,5 +253,5 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
+	BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };

@@ -2,7 +2,6 @@
 
 #include <CRDoubleLinkQueue.hpp>
 #include <CRTurnQueue.hpp>
-#include "../QueueWrapper.hpp"
 #include "ConcurrencyFreaksBaseWrapper.hpp"
 #include <thread>
 

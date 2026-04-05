@@ -1,0 +1,60 @@
+#pragma once
+
+#include <xenium/vyukov_bounded_queue.hpp>
+#include "../../../../../include/BEFAST/ConcurrentQueue.hpp"
+#include "../../QueueWrapper.hpp"
+#include <thread>
+
+#define HAS_VYUKOVBOUNDEDQUEUE
+
+template<typename t_ElementType>
+class QueueWrapper<xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>
+{
+public:
+	QueueWrapper()
+		: m_queue(BEFAST::detail::nextPowerOf2(NUM_ELEMENTS))
+	{
+	}
+
+	void enqueue(size_t nElements, size_t offset)
+	{
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			t_ElementType data = t_ElementType(offset + i);
+			while (!m_queue.try_push_weak(data)) {}
+		}
+	}
+	void dequeue(size_t nElements)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			while (!m_queue.try_pop_weak(data)) {};
+#ifdef VERIFY
+			localValues[data] += 1;
+#endif
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements)
+	{
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			auto _ = m_queue.try_pop_weak(data);
+		}
+	}
+private:
+	xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>> m_queue;
+};

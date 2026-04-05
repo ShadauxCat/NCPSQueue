@@ -1,7 +1,6 @@
 #pragma once
 
 #include <KoganPetrankQueueCHP.hpp>
-#include "../QueueWrapper.hpp"
 #include "ConcurrencyFreaksBaseWrapper.hpp"
 #include <thread>
 

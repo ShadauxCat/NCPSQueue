@@ -22,6 +22,11 @@
  * SOFTWARE.
  */
 
+/*
+ * Reference implementation and public library in C++ for the
+ * Batch-Enabled FIFO Atomic Scalable Ticketed (BEFAST) Concurrent Queue
+ */
+
 #pragma once
 #include <atomic>
 #include <memory>
@@ -37,50 +42,50 @@
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
-#    define NCPS_LIKELY(x) (x)
-#    define NCPS_UNLIKELY(x) (x)
-#    define NCPS_FORCE_NO_INLINE __declspec(noinline)
+#    define BEFAST_LIKELY(x) (x)
+#    define BEFAST_UNLIKELY(x) (x)
+#    define BEFAST_FORCE_NO_INLINE __declspec(noinline)
 #elif defined(__INTEL_COMPILER_BUILD_DATE) || defined(__clang__) || defined(__GNUC__)
-#    define NCPS_LIKELY(x) (__builtin_expect(!!(x), 1))
-#    define NCPS_UNLIKELY(x) (__builtin_expect(!!(x), 0))
-#    define NCPS_FORCE_NO_INLINE __attribute__((noinline))
+#    define BEFAST_LIKELY(x) (__builtin_expect(!!(x), 1))
+#    define BEFAST_UNLIKELY(x) (__builtin_expect(!!(x), 0))
+#    define BEFAST_FORCE_NO_INLINE __attribute__((noinline))
 #endif
 
-#define NCPS_CONCAT_2(left, right) left##right
-#define NCPS_CONCAT(left, right) NCPS_CONCAT_2(left, right)
+#define BEFAST_CONCAT_2(left, right) left##right
+#define BEFAST_CONCAT(left, right) BEFAST_CONCAT_2(left, right)
 
-#define NCPS_ABORT_MSG_F(msg, ...)       \
+#define BEFAST_ABORT_MSG_F(msg, ...)       \
     fprintf(stderr, msg, ##__VA_ARGS__); \
     fputs("\n", stderr);                 \
     fflush(stderr);                      \
     std::terminate();
 
-#ifndef NCPS_CACHELINE_SIZE
-#    define NCPS_CACHELINE_SIZE 64
+#ifndef BEFAST_CACHELINE_SIZE
+#    define BEFAST_CACHELINE_SIZE 64
 #endif
 
-#define NCPS_PAD_CACHELINE CachelinePad NCPS_CONCAT(NCPS_CONCAT(pad##_, __LINE__), __)
+#define BEFAST_PAD_CACHELINE CachelinePad BEFAST_CONCAT(BEFAST_CONCAT(pad##_, __LINE__), __)
 
-#ifndef NCPS_CONCURRENT_QUEUE_DEBUG_ASSERTS
-#    define NCPS_CONCURRENT_QUEUE_DEBUG_ASSERTS 0
+#ifndef BEFAST_CONCURRENT_QUEUE_DEBUG_ASSERTS
+#    define BEFAST_CONCURRENT_QUEUE_DEBUG_ASSERTS 0
 #endif
 
-#if NCPS_CONCURRENT_QUEUE_DEBUG_ASSERTS
-#    define NCPS_CONCURRENT_QUEUE_ASSERT(val)               \
+#if BEFAST_CONCURRENT_QUEUE_DEBUG_ASSERTS
+#    define BEFAST_CONCURRENT_QUEUE_ASSERT(val)               \
         if (!(val)) {                                       \
-            NCPS_ABORT_MSG_F("Assertion failed: %s", #val); \
+            BEFAST_ABORT_MSG_F("Assertion failed: %s", #val); \
         }
 #else
-#    define NCPS_CONCURRENT_QUEUE_ASSERT(val)
+#    define BEFAST_CONCURRENT_QUEUE_ASSERT(val)
 #endif
 
-namespace NCPS
+namespace BEFAST
 {
 #if defined(_WIN32)
 	using ssize_t = SSIZE_T;
 #endif
 
-	typedef unsigned char CachelinePad[NCPS_CACHELINE_SIZE];
+	typedef unsigned char CachelinePad[BEFAST_CACHELINE_SIZE];
 	namespace detail
 	{
 		template <typename t_ElementType, size_t t_BlockSize>
@@ -151,10 +156,10 @@ namespace NCPS
 
 	template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch = false, template<typename> typename t_AllocatorType = std::allocator>
 	class ConcurrentBoundedQueue;
-}  // namespace NCPS
+}  // namespace BEFAST
 
 /**
- * @class   NCPS::detail::Buffer
+ * @class   BEFAST::detail::Buffer
  *
  * @brief   Simple buffer class representing a single allocated block within an unbounded concurrent queue.
  *
@@ -163,7 +168,7 @@ namespace NCPS
  *          contained within this class.
  */
 template <typename t_ElementType, size_t t_BlockSize>
-class NCPS::detail::Buffer
+class BEFAST::detail::Buffer
 {
 public:
 	struct BufferElement
@@ -356,33 +361,33 @@ public:
 	}
 
 private:
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<Buffer*> m_next;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_refCount;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<BufferElement*> m_readPos;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<BufferElement*> m_writePos;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 
 	char m_buffer[t_BlockSize * sizeof(BufferElement)];
 	BufferElement const* const m_end;
 };
 
 /**
- * @class   NCPS::ReadReservationTicket
+ * @class   BEFAST::ReadReservationTicket
  *
  * @brief   Represents a reservation to read an element that hasn't been written to yet.
  *
  * @warning You must call queue.InitializeReservationTicket() on this before using it!
  */
 template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-struct NCPS::ReadReservationTicket
+struct BEFAST::ReadReservationTicket
 {
 	detail::Buffer<t_ElementType, t_BlockSize>* buffer{ nullptr };
 	typename detail::Buffer<t_ElementType, t_BlockSize>::BufferElement* ptr{ nullptr };
-	NCPS::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
+	BEFAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
 	int count{ 0 };
 
 	ReadReservationTicket()
@@ -392,7 +397,7 @@ struct NCPS::ReadReservationTicket
 	{
 		/*if(ptr)
 		{
-			NCPS_ABORT_MSG_F("Destroying a ticket while it still has a reservation!");
+			BEFAST_ABORT_MSG_F("Destroying a ticket while it still has a reservation!");
 		}*/
 		if(buffer && count != 0)
 		{
@@ -423,7 +428,7 @@ struct NCPS::ReadReservationTicket
 };
 
 template <typename t_ElementType, template<typename> typename t_AllocatorType>
-class NCPS::detail::ReservationTicketSubQueue
+class BEFAST::detail::ReservationTicketSubQueue
 {
 public:
 	ReservationTicketSubQueue(size_t const maxConcurrentTicketlessReads) 
@@ -508,16 +513,16 @@ private:
 	t_AllocatorType<Element> m_allocator;
 
 	Element* m_buffer;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_readIdx;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_writeIdx;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	size_t const m_mask;
 };
 
 /**
- * class    NCPS::ConcurrentQueue
+ * class    BEFAST::ConcurrentQueue
  *
  * @brief   Concurrent queue, supporting multi-consumer, multi-producer access
  *          from multiple threads with no synchronization required. Unbounded, capable of
@@ -560,13 +565,13 @@ private:
  *                              be allocated after failed reads, and deallocated on subsequent successful reads.
  */
 template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-class NCPS::ConcurrentQueue
+class BEFAST::ConcurrentQueue
 {
 public:
-	using ReadReservationTicket = NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
-	using Buffer = NCPS::detail::Buffer<t_ElementType, t_BlockSize>;
+	using ReadReservationTicket = BEFAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
+	using Buffer = BEFAST::detail::Buffer<t_ElementType, t_BlockSize>;
 
-	friend struct NCPS::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
+	friend struct BEFAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
 
 protected:
 	/**
@@ -577,7 +582,7 @@ protected:
 	inline void consume_(Buffer* buffer, ssize_t amount)
 	{
 		ssize_t ret = buffer->DecRef(amount);
-		if(NCPS_UNLIKELY(ret == 0))
+		if(BEFAST_UNLIKELY(ret == 0))
 		{
 			while(m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
 			{}
@@ -601,10 +606,10 @@ protected:
 	{
 		Buffer* tail = m_tail.load(std::memory_order_acquire);
 		buffer->Clear();
-		NCPS_CONCURRENT_QUEUE_ASSERT(tail->GetNext() == nullptr);
-		NCPS_CONCURRENT_QUEUE_ASSERT(buffer != m_writeBuffer.load());
-		NCPS_CONCURRENT_QUEUE_ASSERT(buffer != m_readBuffer.load());
-		NCPS_CONCURRENT_QUEUE_ASSERT(buffer != tail);
+		BEFAST_CONCURRENT_QUEUE_ASSERT(tail->GetNext() == nullptr);
+		BEFAST_CONCURRENT_QUEUE_ASSERT(buffer != m_writeBuffer.load());
+		BEFAST_CONCURRENT_QUEUE_ASSERT(buffer != m_readBuffer.load());
+		BEFAST_CONCURRENT_QUEUE_ASSERT(buffer != tail);
 		tail->SetNext(buffer);
 		buffer->SetNext(nullptr);
 		m_tail.store(buffer, std::memory_order_release);
@@ -620,7 +625,7 @@ protected:
 	inline void consumeUnlocked_(Buffer* buffer)
 	{
 		ssize_t ret = buffer->DecRef();
-		if(NCPS_UNLIKELY(ret == 0))
+		if(BEFAST_UNLIKELY(ret == 0))
 		{
 			swapToEnd_(buffer);
 		}
@@ -637,7 +642,7 @@ protected:
 	inline void consumeUnlocked_(Buffer* buffer, ssize_t amount)
 	{
 		ssize_t ret = buffer->DecRef(amount);
-		if(NCPS_UNLIKELY(ret == 0))
+		if(BEFAST_UNLIKELY(ret == 0))
 		{
 			swapToEnd_(buffer);
 		}
@@ -652,7 +657,7 @@ protected:
 	 *          keeps the code for the COMMON case small, and the cost of a function call for the uncommon case
 	 *          is largely irrelevant.
 	 */
-	NCPS_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t batchCount)
+	BEFAST_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t batchCount)
 	{
 		// Just because we won the lottery, though, doesn't mean we're the only ones who won.
 		// Someone else may have already claimed the prize. We need to make sure we still
@@ -678,7 +683,7 @@ protected:
 					m_tail.store(newBuffer, std::memory_order_release);
 				}
 			}
-			NCPS_CONCURRENT_QUEUE_ASSERT(newBuffer != buffer);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(newBuffer != buffer);
 			// Once we've either obtained or allocated the new buffer, we need to make sure
 			// the write position's set to the start of the queue, otherwise we'll just
 			// end up throwing it away again.
@@ -707,7 +712,7 @@ protected:
 	 *          keeps the code for the COMMON case small, and the cost of a function call for the uncommon case
 	 *          is largely irrelevant.
 	 */
-	NCPS_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ReadReservationTicket& ticket)
+	BEFAST_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ReadReservationTicket& ticket)
 	{
 		buffer = m_readBuffer.load(std::memory_order_acquire);
 		element = buffer->GetForRead();
@@ -725,7 +730,7 @@ protected:
 				return false;
 			}
 			nextBuffer->SetReadPosition();
-			NCPS_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
 
 			m_readBuffer.store(nextBuffer, std::memory_order_release);
 			consumeUnlocked_(buffer);
@@ -748,7 +753,7 @@ protected:
 		return true;
 	}
 
-	NCPS_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t count)
+	BEFAST_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t count)
 	{
 		buffer = m_readBuffer.load(std::memory_order_acquire);
 		element = buffer->GetBatchForRead(count);
@@ -766,7 +771,7 @@ protected:
 				return false;
 			}
 			nextBuffer->SetReadPosition();
-			NCPS_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
 
 			m_readBuffer.store(nextBuffer, std::memory_order_release);
 			consumeUnlocked_(buffer);
@@ -797,7 +802,7 @@ protected:
 		// Strictly speaking, this section violates lock-free because the allocation happens within a spin-lock.
 		// Practically speaking, this spin-lock happens so infrequently in a queue with a proper block size that
 		// it may as well never happen at all.
-		while(NCPS_UNLIKELY(element >= buffer->GetEnd()))
+		while(BEFAST_UNLIKELY(element >= buffer->GetEnd()))
 		{
 			// When we get here, we use a simple atomic boolean as a spin lock.
 			// We perform an exchange() on it - if it returns false, that means we won the lottery
@@ -867,7 +872,7 @@ public:
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(val);
-		NCPS_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
+		BEFAST_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
 		element.ready.store(true, std::memory_order_release);
 		if constexpr(t_EnableBatch)
 		{
@@ -884,7 +889,7 @@ public:
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(std::move(val));
-		NCPS_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
+		BEFAST_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
 		element.ready.store(true, std::memory_order_release);
 		if constexpr(t_EnableBatch)
 		{
@@ -922,7 +927,7 @@ public:
 				// Strictly speaking, this section violates lock-free because the allocation happens within a spin-lock.
 				// Practically speaking, this spin-lock happens so infrequently in a queue with a proper block size that
 				// it may as well never happen at all.
-				while(NCPS_UNLIKELY(element >= end))
+				while(BEFAST_UNLIKELY(element >= end))
 				{
 					// When we get here, we use a simple atomic boolean as a spin lock.
 					// We perform an exchange() on it - if it returns false, that means we won the lottery
@@ -960,9 +965,9 @@ public:
 	 *          ticket - with the receipt, to continue the backorder metaphor - in order to read it. It will not be given
 	 *          to another customer, no matter what!
 	 *
-	 *          The reason for this is that, to achieve its speed, NCPSQueue dequeues items *optimistically*, assuming something
+	 *          The reason for this is that, to achieve its speed, BEFASTQueue dequeues items *optimistically*, assuming something
 	 *          is ready to read when you attempt to read it. It increments the read head based on this assumption. This
-	 *          allows NCPSQueue to avoid complex compare-and-swap operations and keep its common-case operation to a single
+	 *          allows BEFASTQueue to avoid complex compare-and-swap operations and keep its common-case operation to a single
 	 *          atomic increment per enqueue or dequeue. The downside, though, is when it's incorrect on its optimistic dequeue,
 	 *          it cannot safely correct - it can't simply decrement the read head because a race condition exists where thread
 	 *          A attempts to read index 0, to find it not yet written, then thread B enqueues indexes 0 and 1, and then thread
@@ -1025,7 +1030,7 @@ public:
 
 		// There are a few cases we can run into in the dequeue operation.
 		// The easiest case is after a failed dequeue, in which case we already have our element and can check it again.
-		if(NCPS_LIKELY(!element))
+		if(BEFAST_LIKELY(!element))
 		{
 			// The second case is when the ticket passed in has been held over from a previous successful dequeue.
 			// In this case we don't have to worry about acquiring the read buffer, because it's cached. We only have
@@ -1033,7 +1038,7 @@ public:
 
 			// Step one, get the next element and determine if the current buffer is exhausted!
 			element = buffer->GetForRead();
-			while(NCPS_UNLIKELY(element >= buffer->GetEnd()))
+			while(BEFAST_UNLIKELY(element >= buffer->GetEnd()))
 			{
 				// If the buffer is exhausted, we have to acquire the next one.
 				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
@@ -1060,7 +1065,7 @@ public:
 		// If not, we're going to remember this element in the reservation ticket and come back to it later.
 		// This definitively prevents any race conditions involved in attempting to correct for overcommit.
 		bool ready = element->ready.load(std::memory_order_acquire);
-		if(NCPS_LIKELY(ready == true))
+		if(BEFAST_LIKELY(ready == true))
 		{
 			// If the element did have valid data, we need to make sure our ticket's not holding any cache information.
 			// Otherwise we'd just keep ending up reading the same cached element over and over.
@@ -1073,7 +1078,7 @@ public:
 			// Then we can return true - success!
 			val = std::move(element->item);
 			element->item.~t_ElementType();
-			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.exchange(false) == true);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(element->ready.exchange(false) == true);
 
 			return true;
 		}
@@ -1185,7 +1190,7 @@ public:
 		{
 			if(!m_pendingRead)
 			{
-				while(NCPS_UNLIKELY(m_element >= m_end))
+				while(BEFAST_UNLIKELY(m_element >= m_end))
 				{
 					// If the buffer is exhausted, we have to acquire the next one.
 					// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
@@ -1236,7 +1241,7 @@ public:
 
 		~BatchDequeueList()
 		{
-			while(NCPS_UNLIKELY(More()))
+			while(BEFAST_UNLIKELY(More()))
 			{
 
 				t_ElementType data;
@@ -1245,7 +1250,7 @@ public:
 				}
 			}
 
-			if(NCPS_LIKELY(m_consumed != 0))
+			if(BEFAST_LIKELY(m_consumed != 0))
 			{
 				m_queue->consume_(m_buffer, m_consumed);
 			}
@@ -1306,7 +1311,7 @@ public:
 	 *        magnitude greater performance than either Dequeue option.
 	 *
 	 * @details In contrast with the other two Dequeue() options, DequeueBatch() takes advantage of the contiguous storage
-	 *          structure of NCPSQueue to reduce contention by allowing the retrieval of multiple items from the queue with
+	 *          structure of BEFASTQueue to reduce contention by allowing the retrieval of multiple items from the queue with
 	 *          only a single atomic increment. A second atomic operation is used to keep track of how many elements it's allowed
 	 *          to read to ensure it doesn't over-consume the queue. When it does, a third atomic operation is used to correct.
 	 *
@@ -1358,7 +1363,7 @@ public:
 		}
 		else
 		{
-			while(NCPS_UNLIKELY(result.More()))
+			while(BEFAST_UNLIKELY(result.More()))
 			{
 				t_ElementType data;
 				while(!result.Next(data))
@@ -1367,11 +1372,11 @@ public:
 			}
 			ssize_t newOutstanding = std::max(m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount, -maxCount);
 			ssize_t batchSize = maxCount;
-			if(NCPS_UNLIKELY(newOutstanding < 0))
+			if(BEFAST_UNLIKELY(newOutstanding < 0))
 			{
 				batchSize += newOutstanding;
 				newOutstanding = m_outstanding.fetch_sub(newOutstanding, std::memory_order_release) - newOutstanding;
-				if(NCPS_LIKELY(batchSize <= 0))
+				if(BEFAST_LIKELY(batchSize <= 0))
 				{
 					return;
 				}
@@ -1393,39 +1398,39 @@ public:
 
 protected:
 	// Cacheline padding prevents false sharing.
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	// Read head, not necessarily the same as the write head
 	std::atomic<Buffer*> m_readBuffer;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	// Spin lock used when swapping buffers - not technically lock free, but lock free isn't always faster.
 	// And this is used rarely enough that the simplicity of the code around it is far more valuable.
 	// The performance improvement of making this lock free would be imperceptible, and the increased amount
 	// of code to get it to work right would likely bloat code size and cause more cache misses in execution.
 	std::atomic<bool> m_reallocatingBuffer;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	// Write head, not necessarily the same as the read head
 	std::atomic<Buffer*> m_writeBuffer;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	// Tail. Obviously.
 	std::atomic<Buffer*> m_tail;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_subQueue;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_failedReads;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_outstanding;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 
 	t_AllocatorType<Buffer> m_allocator;
 };
 
 /**
- * @class NCPS::BoundedReadReservationTicket
+ * @class BEFAST::BoundedReadReservationTicket
  *
  * @brief Represents a reservation to read an element that hasn't been written to yet.
  */
 template <typename t_ElementType>
-struct NCPS::BoundedReadReservationTicket
+struct BEFAST::BoundedReadReservationTicket
 {
 	void* ptr{ nullptr };
 
@@ -1450,12 +1455,12 @@ struct NCPS::BoundedReadReservationTicket
 };
 
 /**
- * @class NCPS::BoundedReadReservationTicket
+ * @class BEFAST::BoundedReadReservationTicket
  *
  * @brief Represents a reservation to write an element that's already holding unread data
  */
 template <typename t_ElementType>
-struct NCPS::BoundedWriteReservationTicket
+struct BEFAST::BoundedWriteReservationTicket
 {
 	void* ptr{ nullptr };
 
@@ -1480,7 +1485,7 @@ struct NCPS::BoundedWriteReservationTicket
 };
 
 /**
- * @class   NCPS::ConcurrentBoundedQueue
+ * @class   BEFAST::ConcurrentBoundedQueue
  *
  * @brief   A bounded implementation of ConcurrentQueue.
  *
@@ -1528,10 +1533,10 @@ struct NCPS::BoundedWriteReservationTicket
  *                              that do accept ticket parameters; those are alloc-free.
  */
 template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-class NCPS::ConcurrentBoundedQueue
+class BEFAST::ConcurrentBoundedQueue
 {
 public:
-	using ReadReservationTicket = NCPS::BoundedReadReservationTicket<t_ElementType>;
+	using ReadReservationTicket = BEFAST::BoundedReadReservationTicket<t_ElementType>;
 	using WriteReservationTicket = BoundedWriteReservationTicket<t_ElementType>;
 
 	struct BufferElement
@@ -1579,7 +1584,7 @@ public:
 		// First we check to see if the reservation ticket contains an element we're supposed to retry a write to
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
 
-		if(NCPS_LIKELY(!element))
+		if(BEFAST_LIKELY(!element))
 		{
 			// If not, then we get a new one with a simple fetch_add on the write index, wrapping it appropriately.
 			size_t idx = m_writeIdx.fetch_add(1, std::memory_order_acq_rel);
@@ -1589,14 +1594,14 @@ public:
 		// Check the ready flag. If it's already set, we can't overwrite it and have to return false,
 		// storing this element on the reservation ticket to make sure we try it again later.
 		bool ready = element->ready.load(std::memory_order_acquire);
-		if(NCPS_LIKELY(ready == false))
+		if(BEFAST_LIKELY(ready == false))
 		{
 			// If it's not already ready, we make sure the reservation ticket is clear so we don't write it again...
 			ticket.ptr = nullptr;
 
 			// ...then we construct the new element...
 			new (&element->item) t_ElementType(val);
-			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
 
 			// ...then we signal that the element is ready to read and return true.
 			element->ready.store(true, std::memory_order_release);
@@ -1623,19 +1628,19 @@ public:
 		// See above for comments; this algorithm is identical except for construction via move.
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
 
-		if(NCPS_LIKELY(!element))
+		if(BEFAST_LIKELY(!element))
 		{
 			size_t idx = m_writeIdx.fetch_add(1, std::memory_order_acq_rel);
 			element = m_buffer + (idx & (c_adjustedSize - 1));
 		}
 
 		bool ready = element->ready.load(std::memory_order_acquire);
-		if(NCPS_LIKELY(ready == false))
+		if(BEFAST_LIKELY(ready == false))
 		{
 			ticket.ptr = nullptr;
 
 			new (&element->item) t_ElementType(std::move(val));
-			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
 
 			element->ready.store(true, std::memory_order_release);
 			if constexpr (t_EnableBatch)
@@ -1663,7 +1668,7 @@ public:
 		// instead of m_writeIdx, and destructing the element instead of constructing it.
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
 
-		if(NCPS_LIKELY(!element))
+		if(BEFAST_LIKELY(!element))
 		{
 			size_t idx = m_readIdx.fetch_add(1, std::memory_order_acq_rel);
 			element = m_buffer + (idx & (c_adjustedSize - 1));
@@ -1675,13 +1680,13 @@ public:
 		}
 
 		bool ready = element->ready.load(std::memory_order_acquire);
-		if(NCPS_LIKELY(ready == true))
+		if(BEFAST_LIKELY(ready == true))
 		{
 			ticket.ptr = nullptr;
 
 			val = std::move(element->item);
 			element->item.~t_ElementType();
-			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == true);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(element->ready.load() == true);
 			element->ready.store(false, std::memory_order_release);
 			return true;
 		}
@@ -1822,7 +1827,7 @@ public:
 
 		~BatchDequeueList()
 		{
-			while (NCPS_UNLIKELY(More()))
+			while (BEFAST_UNLIKELY(More()))
 			{
 				t_ElementType data;
 				while (!Next(data))
@@ -1875,7 +1880,7 @@ public:
 			}
 
 			new (&element->item) t_ElementType(std::move(val));
-			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
 
 			element->ready.store(true, std::memory_order_release);
 
@@ -1894,7 +1899,7 @@ public:
 			}
 
 			new (&element->item) t_ElementType(val);
-			NCPS_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
+			BEFAST_CONCURRENT_QUEUE_ASSERT(element->ready.load() == false);
 
 			element->ready.store(true, std::memory_order_release);
 
@@ -1915,7 +1920,7 @@ public:
 
 		~BatchEnqueueList()
 		{
-			while (NCPS_UNLIKELY(More()))
+			while (BEFAST_UNLIKELY(More()))
 			{
 				t_ElementType data;
 				while (!WriteNext(data))
@@ -1978,11 +1983,11 @@ public:
 			ssize_t newOutstanding = std::min(m_outstanding.fetch_add(count, std::memory_order_acq_rel) + count, (ssize_t)t_QueueSize + count);
 			ssize_t batchSize = count;
 			ssize_t overflow = newOutstanding - t_QueueSize;
-			if (NCPS_UNLIKELY(overflow > 0))
+			if (BEFAST_UNLIKELY(overflow > 0))
 			{
 				batchSize -= overflow;
 				newOutstanding = m_outstanding.fetch_sub(overflow, std::memory_order_release) - overflow;
-				if (NCPS_LIKELY(batchSize <= 0))
+				if (BEFAST_LIKELY(batchSize <= 0))
 				{
 					return;
 				}
@@ -2000,7 +2005,7 @@ public:
 	 *        magnitude greater performance than either Dequeue option.
 	 *
 	 * @details In contrast with the other two Dequeue() options, DequeueBatch() takes advantage of the contiguous storage
-	 *          structure of NCPSQueue to reduce contention by allowing the retrieval of multiple items from the queue with
+	 *          structure of BEFASTQueue to reduce contention by allowing the retrieval of multiple items from the queue with
 	 *          only a single atomic increment. A second atomic operation is used to keep track of how many elements it's allowed
 	 *          to read to ensure it doesn't over-consume the queue. When it does, a third atomic operation is used to correct.
 	 *
@@ -2052,7 +2057,7 @@ public:
 		}
 		else
 		{
-			while (NCPS_UNLIKELY(result.More()))
+			while (BEFAST_UNLIKELY(result.More()))
 			{
 				t_ElementType data;
 				while (!result.Next(data))
@@ -2061,11 +2066,11 @@ public:
 			}
 			ssize_t newOutstanding = std::max(m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount, -maxCount);
 			ssize_t batchSize = maxCount;
-			if (NCPS_UNLIKELY(newOutstanding < 0))
+			if (BEFAST_UNLIKELY(newOutstanding < 0))
 			{
 				batchSize += newOutstanding;
 				newOutstanding = m_outstanding.fetch_sub(newOutstanding, std::memory_order_release) - newOutstanding;
-				if (NCPS_LIKELY(batchSize <= 0))
+				if (BEFAST_LIKELY(batchSize <= 0))
 				{
 					return;
 				}
@@ -2081,21 +2086,21 @@ public:
 private:
 	constexpr static size_t c_adjustedSize = detail::nextPowerOf2(t_QueueSize);
 
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<size_t> m_readIdx;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<size_t> m_writeIdx;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	BufferElement m_buffer[c_adjustedSize];
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_readSubQueue;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_failedReads;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	detail::ReservationTicketSubQueue<WriteReservationTicket, t_AllocatorType> m_writeSubQueue;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_failedWrites;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 	std::atomic<ssize_t> m_outstanding;
-	NCPS_PAD_CACHELINE;
+	BEFAST_PAD_CACHELINE;
 };

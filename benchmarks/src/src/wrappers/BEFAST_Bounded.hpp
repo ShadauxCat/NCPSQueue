@@ -1,16 +1,16 @@
 #pragma once
 
-#include "../../../../include/NCPS/ConcurrentQueue.hpp"
+#include "../../../../include/BEFAST/ConcurrentQueue.hpp"
 #include "../QueueWrapper.hpp"
 
-#define HAS_NCPS_BOUNDED
+#define HAS_BEFAST_BOUNDED
 
 template<typename t_ElementType, TicketType t_TicketType, size_t t_NumElements, bool t_EnableBatch>
-class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>, t_TicketType>
+class QueueWrapper<BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>, t_TicketType>
 {
 public:
 	QueueWrapper()
-		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>())
+		: m_queue(new BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>())
 	{}
 
 	~QueueWrapper()
@@ -20,7 +20,7 @@ public:
 
 	void enqueue(size_t nElements, size_t offset)
 	{
-		NCPS::BoundedWriteReservationTicket<t_ElementType> ticket;
+		BEFAST::BoundedWriteReservationTicket<t_ElementType> ticket;
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -30,7 +30,7 @@ public:
 	}
 	void enqueueMove(size_t nElements)
 	{
-		NCPS::BoundedWriteReservationTicket<t_ElementType> ticket;
+		BEFAST::BoundedWriteReservationTicket<t_ElementType> ticket;
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -43,7 +43,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		NCPS::BoundedReadReservationTicket<t_ElementType> ticket;
+		BEFAST::BoundedReadReservationTicket<t_ElementType> ticket;
 
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
@@ -65,7 +65,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		NCPS::BoundedReadReservationTicket<t_ElementType> ticket;
+		BEFAST::BoundedReadReservationTicket<t_ElementType> ticket;
 
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
@@ -74,16 +74,16 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>* m_queue;
+	BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>* m_queue;
 };
 
 
 template<typename t_ElementType, size_t t_NumElements>
-class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements>, TicketType::NONE>
+class QueueWrapper<BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
-		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements>(1024, 1024))
+		: m_queue(new BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>(1024, 1024))
 	{}
 
 	~QueueWrapper()
@@ -139,16 +139,16 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements>* m_queue;
+	BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>* m_queue;
 };
 
 template<typename t_ElementType, size_t t_NumElements, size_t t_BatchSize>
-class QueueWrapper<NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>, TicketType::BATCH, t_BatchSize>
+class QueueWrapper<BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>, TicketType::BATCH, t_BatchSize>
 {
 	std::atomic<int> totalRemaining{ 0 };
 public:
 	QueueWrapper()
-		: m_queue(new NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>(1024, 1024))
+		: m_queue(new BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>(1024, 1024))
 	{}
 
 	~QueueWrapper()
@@ -158,7 +158,7 @@ public:
 
 	void enqueue(size_t nElements, size_t offset)
 	{
-		typename NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		typename BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
 		ssize_t numWritten = 0;
 		while (numWritten < nElements)
 		{
@@ -180,7 +180,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+		typename BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
 
 		totalRemaining += nElements;
 		while (totalRemaining.load() > 0)
@@ -210,7 +210,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements)
 	{
-		typename NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+		typename BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -218,5 +218,5 @@ public:
 		}
 	}
 private:
-	NCPS::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>* m_queue;
+	BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>* m_queue;
 };

@@ -16,9 +16,6 @@
 #include "util/FixedStaticString.hpp"
 
 #ifdef VERIFY
-std::unordered_map<int, int> values;
-std::mutex valueLock;
-
 void verify(std::string type, int operation, int producers, int consumers, int count)
 {
 	bool valid = true;
@@ -68,7 +65,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	dequeues.resize(dequeueThreads);
 	std::vector<int64_t> enqueues;
 	enqueues.resize(enqueueThreads);
-	std::vector<int64_t> times[4];
+	std::vector<int64_t> times[5];
 	for (auto& timeVect : times)
 	{
 		timeVect.resize(nIters);
@@ -309,6 +306,66 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 			times[3][iter] = timer.exchange(-1) - start;
 		}
+
+		if (enqueueThreads == 1 && dequeueThreads == 1)
+		{
+			// Time latency
+			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize> wrapper1;
+			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize> wrapper2;
+
+			auto pingThread = std::thread(
+				std::bind(
+					latencyTestPing<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>>,
+					&wrapper1,
+					&wrapper2
+				)
+			);
+			auto pongThread = std::thread(
+				std::bind(
+					latencyTestPong<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>>,
+					&wrapper1,
+					&wrapper2
+				)
+			);
+#if PIN_THREADS
+#ifdef _WIN32
+			if (!SetThreadAffinityMask(pingThread.native_handle(), 1 << (0 % std::thread::hardware_concurrency())))
+			{
+				abort();
+			}
+			if (!SetThreadAffinityMask(pongThread.native_handle(), 1 << (1 % std::thread::hardware_concurrency())))
+			{
+				abort();
+			}
+#else
+			cpu_set_t cpuset;
+			pthread_t thread = pingThread.native_handle();
+
+			CPU_ZERO(&cpuset);
+			CPU_SET((0 % std::thread::hardware_concurrency()), &cpuset);
+			if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+			{
+				abort();
+			}
+			
+			thread = pongThread.native_handle();
+
+			CPU_ZERO(&cpuset);
+			CPU_SET((1 % std::thread::hardware_concurrency()), &cpuset);
+			if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+			{
+				abort();
+			}
+#endif
+#endif
+			while (started.load() < dequeueThreads) {}
+			started.store(0);
+			int64_t start = SteadyNow();
+			timer.store(start);
+			pingThread.join();
+			pongThread.join();
+			times[4][iter] = timer.exchange(-1) - start;
+		}
 	}
 
 	if(dequeueThreads == 1)
@@ -335,14 +392,22 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		OpsPerSecond(Min(times[2]), adjustedNumElements) << "\t" <<
 		OpsPerSecond(median(times[2]), adjustedNumElements) << std::endl;
 		
-		
-	if(enqueueThreads == 1)
+
+	if (enqueueThreads == 1)
 	{
 		std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 4 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 			OpsPerSecond(mean(times[3]), adjustedNumElements * 10) << "\t" <<
 			OpsPerSecond(Max(times[3]), adjustedNumElements * 10) << "\t" <<
 			OpsPerSecond(Min(times[3]), adjustedNumElements * 10) << "\t" <<
 			OpsPerSecond(median(times[3]), adjustedNumElements) << std::endl;
+	}
+	if (enqueueThreads == 1 && dequeueThreads == 1)
+	{
+		std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 5 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			OpsPerSecond(mean(times[4]), adjustedNumElements * 10) << "\t" <<
+			OpsPerSecond(Max(times[4]), adjustedNumElements * 10) << "\t" <<
+			OpsPerSecond(Min(times[4]), adjustedNumElements * 10) << "\t" <<
+			OpsPerSecond(median(times[4]), adjustedNumElements) << std::endl;
 	}
 }
 
@@ -369,8 +434,28 @@ void PrintEmpty()
 template<typename t_ElementType, bool t_IsPod = true>
 void RunTestsOnElementType()
 {
+#ifdef HAS_DEQUE
+	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>>();
+#endif
+
 #ifdef HAS_1024CORES
 	RunTestsOnQueueType<t_ElementType, ext_1024cores::mpmc_bounded_queue<t_ElementType>>();
+#endif
+
+#ifdef HAS_TBB
+	RunTestsOnQueueType<t_ElementType, tbb::concurrent_bounded_queue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, tbb::concurrent_queue<t_ElementType>>();
+#endif
+
+#ifdef HAS_BOOST
+	if constexpr (t_IsPod)
+	{
+		RunTestsOnQueueType<t_ElementType, boost::lockfree::queue<t_ElementType>>();
+	}
+	else
+	{
+		PrintEmpty<t_ElementType, boost::lockfree::queue<t_ElementType>>();
+	}
 #endif
 
 #ifdef HAS_BITNEXT
@@ -412,68 +497,75 @@ void RunTestsOnElementType()
 	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>>();
 #endif
 
-#ifdef HAS_TBB
-	RunTestsOnQueueType<t_ElementType, tbb::concurrent_bounded_queue<t_ElementType>>();
-	RunTestsOnQueueType<t_ElementType, tbb::concurrent_queue<t_ElementType>>();
+#ifdef HAS_CHASEWORKSTEALINGDEQUE
+	RunTestsOnQueueType<t_ElementType, xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
 #endif
 
-#ifdef HAS_BOOST
-	if constexpr (t_IsPod)
-	{
-		RunTestsOnQueueType<t_ElementType, boost::lockfree::queue<t_ElementType>>();
-	}
-	else
-	{
-		PrintEmpty<t_ElementType, boost::lockfree::queue<t_ElementType>>();
-	}
+#ifdef HAS_KIRSCH
+	RunTestsOnQueueType<t_ElementType, xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
+	RunTestsOnQueueType<t_ElementType, xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
 #endif
 
-#ifdef HAS_DEQUE
-	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>>();
+#ifdef HAS_XENIUM_MICHAELSCOTT
+	RunTestsOnQueueType<t_ElementType, xenium::michael_scott_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
 #endif
 
-#ifdef HAS_NCPS_UNBOUNDED
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, false>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
-
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
-
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::EPHEMERAL>();
-
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
+#ifdef HAS_NIKOLAEV
+	RunTestsOnQueueType<t_ElementType, xenium::nikolaev_bounded_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
+	//Hangs in release builds
+	//RunTestsOnQueueType<t_ElementType, xenium::nikolaev_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
 #endif
 
-#ifdef HAS_NCPS_BOUNDED
-	/*RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, 8192, true>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, 8192, false>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, 8192>, TicketType::NONE>();*/
+#ifdef HAS_RAMALHETE
+	RunTestsOnQueueType<t_ElementType, xenium::ramalhete_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
+#endif
 
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, NCPS::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
+#ifdef HAS_VYUKOVBOUNDEDQUEUE
+	RunTestsOnQueueType<t_ElementType, xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
+#endif
+
+#ifdef HAS_BEFAST_UNBOUNDED
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
+
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
+
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::EPHEMERAL>();
+
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
+#endif
+
+#ifdef HAS_BEFAST_BOUNDED
+	/*RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, false>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192>, TicketType::NONE>();*/
+
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
 #endif
 }
 
@@ -495,5 +587,8 @@ int main()
 	RunTestsOnElementType<FixedStaticString<64>, false>();
 #endif
 #endif
+	std::cout << "Done testing, press any key to exit." << std::endl;
+	std::string discard;
+	std::cin >> discard;
 }
 

@@ -2,7 +2,6 @@
 
 #include <BitNextQueue.hpp>
 #include <BitNextLazyHeadQueue.hpp>
-#include "../QueueWrapper.hpp"
 #include "ConcurrencyFreaksBaseWrapper.hpp"
 #include <thread>
 

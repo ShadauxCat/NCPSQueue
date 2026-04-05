@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../config.hpp"
-#include "../QueueWrapper.hpp"
+#include "../../config.hpp"
+#include "../../QueueWrapper.hpp"
 #include <thread>
 #include <atomic>
 
@@ -32,15 +32,6 @@ public:
 		{
 			t_ElementType* data = &m_ElementsStaticArray[offset + i];
 			m_queue.enqueue(data, tid);
-		}
-	}
-	void enqueueMove(size_t nElements)
-	{
-		int tid = m_tid.fetch_add(1);
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.enqueue(std::move(data), tid);
 		}
 	}
 	void dequeue(size_t nElements)

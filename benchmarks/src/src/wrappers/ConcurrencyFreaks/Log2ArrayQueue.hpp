@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array/Log2ArrayQueue.hpp>
-#include "../QueueWrapper.hpp"
 #include "ConcurrencyFreaksBaseWrapper.hpp"
 #include <thread>
 
