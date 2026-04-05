@@ -186,7 +186,7 @@ public:
 		m_end(reinterpret_cast<BufferElement*>(m_buffer) + t_BlockSize)
 	{
 		// Memset the buffer block to 0 so all 'ready' flags read as 'false'
-		memset(m_buffer, 0, sizeof(BufferElement) * t_BlockSize);
+		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(BufferElement) * t_BlockSize);
 	}
 
 	/**
@@ -212,7 +212,7 @@ public:
 	inline void Clear()
 	{
 		m_refCount.store(t_BlockSize + 2);
-		memset(m_buffer, 0, sizeof(BufferElement) * t_BlockSize);
+		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(BufferElement) * t_BlockSize);
 	}
 
 	/**
@@ -439,7 +439,7 @@ public:
 	{
 		if(m_buffer)
 		{
-			memset(m_buffer, 0, maxConcurrentTicketlessReads * sizeof(*m_buffer));
+			memset(reinterpret_cast<void*>(m_buffer), 0, maxConcurrentTicketlessReads * sizeof(*m_buffer));
 		}
 
 		for(size_t i = 0; i < maxConcurrentTicketlessReads; ++i)
@@ -1554,7 +1554,7 @@ public:
 		, m_failedWrites(0)
 		, m_outstanding(0)
 	{
-		memset(m_buffer, 0, c_adjustedSize * sizeof(BufferElement)); 
+		memset(reinterpret_cast<void*>(m_buffer), 0, c_adjustedSize * sizeof(BufferElement)); 
 	}
 
 	~ConcurrentBoundedQueue()
