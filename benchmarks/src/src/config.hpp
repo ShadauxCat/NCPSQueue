@@ -1,6 +1,6 @@
 #pragma once
 
-#define DO_VERIFICATION 0
+#define DO_VERIFICATION false
 
 constexpr size_t NUM_ELEMENTS = 1000000;
 
@@ -17,11 +17,11 @@ constexpr int nIters = 25;
 #define MAX_PRODUCERS NCORES
 #define MAX_CONSUMERS NCORES
 
-constexpr bool PIN_THREADS = true;
+#define PIN_THREADS true
 
-constexpr bool BENCHMARK_CHAR = true;
-constexpr bool BENCHMARK_INT64 = true;
-constexpr bool BENCHMARK_FIXEDSTRING64BYTES = true;
+#define BENCHMARK_CHAR true
+#define BENCHMARK_INT64 true
+#define BENCHMARK_FIXEDSTRING64BYTES true
 
 // Commenting out any of the below #include directives will disable the tests on it.
 

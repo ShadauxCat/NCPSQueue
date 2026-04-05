@@ -1,5 +1,6 @@
 #pragma once
 
+#include <math.h>
 #include <vector>
 #include <stddef.h>
 #include <algorithm>
@@ -52,4 +53,41 @@ double OpsPerSecond(int64_t duration, size_t numOps)
 	// 1000000000 nanoseconds = 1 second
 	double opsPerSecond = 1000000000 / avgNanosPerOp;
 	return opsPerSecond;
+}
+
+double OpsPerSecondIqr(std::vector<int64_t> const& data, size_t numOps)
+{
+	std::vector<int64_t> newVect(data.begin(), data.end());
+	std::sort(newVect.begin(), newVect.end());
+	auto size = newVect.size();
+
+	std::vector<int64_t> firsthalf;
+	std::vector<int64_t> secondhalf;
+
+	if (size % 2 == 0)
+	{
+		for (auto i = 0; i < size / 2; ++i)
+		{
+			firsthalf.push_back(newVect[i]);
+		}
+		for (auto i = size / 2; i < size; ++i)
+		{
+			secondhalf.push_back(newVect[i]);
+		}
+	}
+	else
+	{
+		for (auto i = 0; i < size / 2; ++i)
+		{
+			firsthalf.push_back(newVect[i]);
+		}
+		for (auto i = size / 2 + 1; i < size; ++i)
+		{
+			secondhalf.push_back(newVect[i]);
+		}
+	}
+	// Firsthalf - secondhalf instead of the usual secondhalf - firsthalf because these are durations,
+	// but we're converting them to ops per second, meaning larger numbers become smaller numbers and these
+	// arrays are actually in reverse order according to the final value they convert to.
+	return OpsPerSecond(median(firsthalf), numOps) - OpsPerSecond(median(secondhalf), numOps);
 }

@@ -7,12 +7,12 @@
 #include <mutex>
 #include <assert.h>
 #include <unordered_map>
+#include "util/math.hpp"
 
 #include "config.hpp"
 
 #include "util/time.hpp"
 #include "util/typename.hpp"
-#include "util/math.hpp"
 #include "util/FixedStaticString.hpp"
 
 #ifdef VERIFY
@@ -374,7 +374,8 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			OpsPerSecond(mean(times[0]), adjustedNumElements) << "\t" <<
 			OpsPerSecond(Max(times[0]), adjustedNumElements) << "\t" <<
 			OpsPerSecond(Min(times[0]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(median(times[0]), adjustedNumElements) << std::endl;
+			OpsPerSecond(median(times[0]), adjustedNumElements) << "\t" <<
+			OpsPerSecondIqr(times[0], adjustedNumElements) << std::endl;
 	}
 		
 	if(enqueueThreads == 1)
@@ -383,14 +384,16 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			OpsPerSecond(mean(times[1]), adjustedNumElements) << "\t" <<
 			OpsPerSecond(Max(times[1]), adjustedNumElements) << "\t" <<
 			OpsPerSecond(Min(times[1]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(median(times[1]), adjustedNumElements) << std::endl;
+			OpsPerSecond(median(times[1]), adjustedNumElements) << "\t" <<
+			OpsPerSecondIqr(times[1], adjustedNumElements) << std::endl;
 	}
 		
 	std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 3 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 		OpsPerSecond(mean(times[2]), adjustedNumElements) << "\t" <<
 		OpsPerSecond(Max(times[2]), adjustedNumElements) << "\t" <<
 		OpsPerSecond(Min(times[2]), adjustedNumElements) << "\t" <<
-		OpsPerSecond(median(times[2]), adjustedNumElements) << std::endl;
+		OpsPerSecond(median(times[2]), adjustedNumElements) << "\t" <<
+		OpsPerSecondIqr(times[2], adjustedNumElements) << std::endl;
 		
 
 	if (enqueueThreads == 1)
@@ -399,7 +402,8 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			OpsPerSecond(mean(times[3]), adjustedNumElements * 10) << "\t" <<
 			OpsPerSecond(Max(times[3]), adjustedNumElements * 10) << "\t" <<
 			OpsPerSecond(Min(times[3]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(median(times[3]), adjustedNumElements) << std::endl;
+			OpsPerSecond(median(times[3]), adjustedNumElements) << "\t" <<
+			OpsPerSecondIqr(times[3], adjustedNumElements) << std::endl;
 	}
 	if (enqueueThreads == 1 && dequeueThreads == 1)
 	{
@@ -407,7 +411,8 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			OpsPerSecond(mean(times[4]), adjustedNumElements * 10) << "\t" <<
 			OpsPerSecond(Max(times[4]), adjustedNumElements * 10) << "\t" <<
 			OpsPerSecond(Min(times[4]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(median(times[4]), adjustedNumElements) << std::endl;
+			OpsPerSecond(median(times[4]), adjustedNumElements) << "\t" <<
+			OpsPerSecondIqr(times[4], adjustedNumElements) << std::endl;
 	}
 }
 
@@ -525,29 +530,29 @@ void RunTestsOnElementType()
 #endif
 
 #ifdef HAS_BEFAST_UNBOUNDED
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
 
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
-
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::EPHEMERAL>();
-
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
+
+
 #endif
 
 #ifdef HAS_BEFAST_BOUNDED
@@ -559,13 +564,16 @@ void RunTestsOnElementType()
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192>, TicketType::NONE>();*/
 
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
 	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
 #endif
 }
 
