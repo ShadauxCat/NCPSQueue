@@ -436,6 +436,7 @@ struct BEAST::ReadReservationTicket
 		: buffer(other.buffer)
 		, ptr(other.ptr)
 		, queue(other.queue)
+		, count(other.count)
 	{
 		other.buffer = nullptr;
 		other.ptr = nullptr;
@@ -445,6 +446,7 @@ struct BEAST::ReadReservationTicket
 		buffer = other.buffer;
 		ptr = other.ptr;
 		queue = other.queue;
+		count = other.count;
 		other.buffer = nullptr;
 		other.ptr = nullptr;
 		return *this;
