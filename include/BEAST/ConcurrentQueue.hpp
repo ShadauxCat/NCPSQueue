@@ -1146,7 +1146,7 @@ public:
 		bool reattempt = m_subQueue.Dequeue(ticket);
 		if(!reattempt)
 		{
-			if(m_failedReads.load(std::memory_order_acquire) != 0)
+			if(m_failedReads.load(std::memory_order_seq_cst) != 0)
 			{
 				return false;
 			}
@@ -1156,13 +1156,13 @@ public:
 		{
 			if(reattempt)
 			{
-				m_failedReads.fetch_sub(1, std::memory_order_acq_rel);
+				m_failedReads.fetch_sub(1, std::memory_order_seq_cst);
 			}
 			return true;
 		}
 		if(!reattempt)
 		{
-			m_failedReads.fetch_add(1, std::memory_order_acq_rel);
+			m_failedReads.fetch_add(1, std::memory_order_seq_cst);
 		}
 		ssize_t pos = m_subQueue.Enqueue(ticket);
 		for(;;)
@@ -1173,7 +1173,7 @@ public:
 			}
 			if(Dequeue(val, ticket))
 			{
-				m_failedReads.fetch_sub(1, std::memory_order_acq_rel);
+				m_failedReads.fetch_sub(1, std::memory_order_seq_cst);
 				return true;
 			}
 			m_subQueue.Enqueue(ticket);
