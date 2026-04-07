@@ -6,7 +6,7 @@
 
 #define HAS_MICHAELSCOTTQUEUE
 
-template<typename t_ElementType>
-class QueueWrapper<MichaelScottQueue<t_ElementType>> : public ConcurrencyFreaksBaseWrapper<MichaelScottQueue, t_ElementType>
+template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
+class QueueWrapper<MichaelScottQueue<t_ElementType>, TicketType::NONE, 0, t_PointerQueuePolicy> : public ConcurrencyFreaksBaseWrapper<MichaelScottQueue, t_ElementType, t_PointerQueuePolicy>
 {
 };

@@ -16,7 +16,7 @@ public:
 	{
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -24,7 +24,7 @@ public:
 			m_queue.push(data);
 		}
 	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
@@ -47,7 +47,7 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)

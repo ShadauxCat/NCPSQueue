@@ -6,7 +6,7 @@
 
 #define HAS_FAAARRAYQUEUE
 
-template<typename t_ElementType>
-class QueueWrapper<FAAArrayQueue<t_ElementType>> : public ConcurrencyFreaksBaseWrapper<FAAArrayQueue, t_ElementType>
+template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
+class QueueWrapper<FAAArrayQueue<t_ElementType>, TicketType::NONE, 0, t_PointerQueuePolicy> : public ConcurrencyFreaksBaseWrapper<FAAArrayQueue, t_ElementType, t_PointerQueuePolicy>
 {
 };

@@ -6,7 +6,7 @@
 
 #define HAS_LOG2ARRAYQUEUE
 
-template<typename t_ElementType>
-class QueueWrapper<Log2ArrayQueue<t_ElementType>> : public ConcurrencyFreaksBaseWrapper<Log2ArrayQueue, t_ElementType>
+template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
+class QueueWrapper<Log2ArrayQueue<t_ElementType>, TicketType::NONE, 0, t_PointerQueuePolicy> : public ConcurrencyFreaksBaseWrapper<Log2ArrayQueue, t_ElementType, t_PointerQueuePolicy>
 {
 };

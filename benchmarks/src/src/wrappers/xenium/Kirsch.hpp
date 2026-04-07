@@ -8,33 +8,50 @@
 
 #define HAS_KIRSCH
 
-template<typename t_ElementType>
-class QueueWrapper<xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>
+template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
+class QueueWrapper<
+	xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+	TicketType::NONE, 0, t_PointerQueuePolicy
+>
 {
 public:
 	QueueWrapper()
-		: m_queue(16, NUM_ELEMENTS/16+1)
+		: m_queue(16, benchmarkConfig::numElements / 16 + 1)
 	{
-		m_ElementsStaticArray = new t_ElementType[NUM_ELEMENTS];
-		for (size_t i = 0; i < NUM_ELEMENTS; ++i)
+		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
 		{
-			m_ElementsStaticArray[i] = t_ElementType(i);
+			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements];
+			for (size_t i = 0; i < benchmarkConfig::numElements; ++i)
+			{
+				m_ElementsStaticArray[i] = t_ElementType(i);
+			}
 		}
 	}
 	~QueueWrapper()
 	{
-		delete[] m_ElementsStaticArray;
+		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
+		{
+			delete[] m_ElementsStaticArray;
+		}
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			t_ElementType* data = &m_ElementsStaticArray[offset + i];
+			t_ElementType* data;
+			if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
+			{
+				data = &m_ElementsStaticArray[offset + i];
+			}
+			else
+			{
+				data = new t_ElementType(offset + i);
+			}
 			while (!m_queue.try_push(data)) {}
 		}
 	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
@@ -46,6 +63,10 @@ public:
 #ifdef VERIFY
 			localValues[*data] += 1;
 #endif
+			if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Dynamic)
+			{
+				delete data;
+			}
 		}
 #ifdef VERIFY
 		{
@@ -57,7 +78,7 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
 		t_ElementType* data = nullptr;
 		for (size_t i = 0; i < nElements; ++i)
@@ -73,33 +94,50 @@ private:
 };
 
 
-template<typename t_ElementType>
-class QueueWrapper<xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>
+template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
+class QueueWrapper<
+	xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+	TicketType::NONE, 0, t_PointerQueuePolicy
+>
 {
 public:
 	QueueWrapper()
 		: m_queue(16)
 	{
-		m_ElementsStaticArray = new t_ElementType[NUM_ELEMENTS];
-		for (size_t i = 0; i < NUM_ELEMENTS; ++i)
+		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
 		{
-			m_ElementsStaticArray[i] = t_ElementType(i);
+			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements];
+			for (size_t i = 0; i < benchmarkConfig::numElements; ++i)
+			{
+				m_ElementsStaticArray[i] = t_ElementType(i);
+			}
 		}
 	}
 	~QueueWrapper()
 	{
-		delete[] m_ElementsStaticArray;
+		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
+		{
+			delete[] m_ElementsStaticArray;
+		}
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			t_ElementType* data = &m_ElementsStaticArray[offset + i];
+			t_ElementType* data;
+			if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
+			{
+				data = &m_ElementsStaticArray[offset + i];
+			}
+			else
+			{
+				data = new t_ElementType(offset + i);
+			}
 			m_queue.push(data);
 		}
 	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
@@ -111,6 +149,10 @@ public:
 #ifdef VERIFY
 			localValues[*data] += 1;
 #endif
+			if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Dynamic)
+			{
+				delete data;
+			}
 		}
 #ifdef VERIFY
 		{
@@ -122,7 +164,7 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
 		t_ElementType* data = nullptr;
 		for (size_t i = 0; i < nElements; ++i)

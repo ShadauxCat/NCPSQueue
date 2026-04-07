@@ -5,39 +5,49 @@
 #include <thread>
 #include <atomic>
 
-template<template<typename> typename t_QueueType, typename t_ElementType>
+template<template<typename> typename t_QueueType, typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
 class ConcurrencyFreaksBaseWrapper
 {
 public:
-
 	ConcurrencyFreaksBaseWrapper()
 		: m_queue(std::thread::hardware_concurrency())
 	{
-		m_ElementsStaticArray = new t_ElementType[NUM_ELEMENTS];
-		for (size_t i = 0; i < NUM_ELEMENTS; ++i)
+		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
 		{
-			m_ElementsStaticArray[i] = t_ElementType(i);
+			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements];
+			for (size_t i = 0; i < benchmarkConfig::numElements; ++i)
+			{
+				m_ElementsStaticArray[i] = t_ElementType(i);
+			}
 		}
 	}
 
 	~ConcurrencyFreaksBaseWrapper()
 	{
-		delete[] m_ElementsStaticArray;
+		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
+		{
+			delete[] m_ElementsStaticArray;
+		}
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
-		int tid = m_tid.fetch_add(1);
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			t_ElementType* data = &m_ElementsStaticArray[offset + i];
+			t_ElementType* data;
+			if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
+			{
+				data = &m_ElementsStaticArray[offset + i];
+			}
+			else
+			{
+				data = new t_ElementType(offset + i);
+			}
 			m_queue.enqueue(data, tid);
 		}
 	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
-		int tid = m_tid.fetch_add(1);
-
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
@@ -48,6 +58,10 @@ public:
 #ifdef VERIFY
 			localValues[*data] += 1;
 #endif
+			if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Dynamic)
+			{
+				delete data;
+			}
 		}
 #ifdef VERIFY
 		{
@@ -59,9 +73,8 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
-		int tid = m_tid.fetch_add(1);
 		t_ElementType* data;
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -74,5 +87,4 @@ private:
 
 	// For the sake of fairness in comparing the algorithms, this is to avoid having dynamic memory allocation...
 	t_ElementType* m_ElementsStaticArray;
-	std::atomic<int> m_tid{ 0 };
 };

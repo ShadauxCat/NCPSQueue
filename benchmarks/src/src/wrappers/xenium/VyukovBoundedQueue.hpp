@@ -1,7 +1,7 @@
 #pragma once
 
 #include <xenium/vyukov_bounded_queue.hpp>
-#include "../../../../../include/BEFAST/ConcurrentQueue.hpp"
+#include "../../../../../include/BEAST/ConcurrentQueue.hpp"
 #include "../../QueueWrapper.hpp"
 #include <thread>
 
@@ -12,11 +12,11 @@ class QueueWrapper<xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::r
 {
 public:
 	QueueWrapper()
-		: m_queue(BEFAST::detail::nextPowerOf2(NUM_ELEMENTS))
+		: m_queue(BEAST::detail::nextPowerOf2(benchmarkConfig::numElements))
 	{
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -24,7 +24,7 @@ public:
 			while (!m_queue.try_push_weak(data)) {}
 		}
 	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
@@ -47,7 +47,7 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)

@@ -6,7 +6,7 @@
 
 #define HAS_LAZYINDEXARRAYQUEUE
 
-template<typename t_ElementType>
-class QueueWrapper<LazyIndexArrayQueue<t_ElementType>> : public ConcurrencyFreaksBaseWrapper<LazyIndexArrayQueue, t_ElementType>
+template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
+class QueueWrapper<LazyIndexArrayQueue<t_ElementType>, TicketType::NONE, 0, t_PointerQueuePolicy> : public ConcurrencyFreaksBaseWrapper<LazyIndexArrayQueue, t_ElementType, t_PointerQueuePolicy>
 {
 };

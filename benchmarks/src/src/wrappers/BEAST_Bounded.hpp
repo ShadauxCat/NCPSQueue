@@ -1,16 +1,16 @@
 #pragma once
 
-#include "../../../../include/BEFAST/ConcurrentQueue.hpp"
+#include "../../../../include/BEAST/ConcurrentQueue.hpp"
 #include "../QueueWrapper.hpp"
 
-#define HAS_BEFAST_BOUNDED
+#define HAS_BEAST_BOUNDED
 
 template<typename t_ElementType, TicketType t_TicketType, size_t t_NumElements, bool t_EnableBatch>
-class QueueWrapper<BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>, t_TicketType>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>, t_TicketType>
 {
 public:
 	QueueWrapper()
-		: m_queue(new BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>())
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>())
 	{}
 
 	~QueueWrapper()
@@ -18,32 +18,22 @@ public:
 		delete m_queue;
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
-		BEFAST::BoundedWriteReservationTicket<t_ElementType> ticket;
+		BEAST::BoundedWriteReservationTicket<t_ElementType> ticket;
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
 			t_ElementType data = t_ElementType(offset + i);
-			m_queue->Enqueue(data, ticket);
+			while (!m_queue->Enqueue(data, ticket)) {};
 		}
 	}
-	void enqueueMove(size_t nElements)
-	{
-		BEFAST::BoundedWriteReservationTicket<t_ElementType> ticket;
-
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue->Enqueue(std::move(data), ticket);
-		}
-	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		BEFAST::BoundedReadReservationTicket<t_ElementType> ticket;
+		BEAST::BoundedReadReservationTicket<t_ElementType> ticket;
 
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
@@ -63,9 +53,9 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
-		BEFAST::BoundedReadReservationTicket<t_ElementType> ticket;
+		BEAST::BoundedReadReservationTicket<t_ElementType> ticket;
 
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
@@ -74,16 +64,15 @@ public:
 		}
 	}
 private:
-	BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>* m_queue;
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>* m_queue;
 };
 
-
 template<typename t_ElementType, size_t t_NumElements>
-class QueueWrapper<BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>, TicketType::NONE>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
-		: m_queue(new BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>(1024, 1024))
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>(std::thread::hardware_concurrency(), std::thread::hardware_concurrency()))
 	{}
 
 	~QueueWrapper()
@@ -91,23 +80,15 @@ public:
 		delete m_queue;
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
 		for (size_t i = 0; i < nElements; ++i)
 		{
 			t_ElementType data = t_ElementType(offset + i);
-			m_queue->Enqueue(data);
+			while (!m_queue->Enqueue(data)) {};
 		}
 	}
-	void enqueueMove(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue->Enqueue(std::move(data));
-		}
-	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
@@ -130,7 +111,7 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
@@ -139,16 +120,16 @@ public:
 		}
 	}
 private:
-	BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>* m_queue;
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>* m_queue;
 };
 
 template<typename t_ElementType, size_t t_NumElements, size_t t_BatchSize>
-class QueueWrapper<BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>, TicketType::BATCH, t_BatchSize>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>, TicketType::BATCH, t_BatchSize>
 {
 	std::atomic<int> totalRemaining{ 0 };
 public:
 	QueueWrapper()
-		: m_queue(new BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>(1024, 1024))
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>(0, 0))
 	{}
 
 	~QueueWrapper()
@@ -156,9 +137,9 @@ public:
 		delete m_queue;
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
-		typename BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
 		ssize_t numWritten = 0;
 		while (numWritten < nElements)
 		{
@@ -175,12 +156,12 @@ public:
 		}
 	}
 
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
 
 		totalRemaining += nElements;
 		while (totalRemaining.load() > 0)
@@ -208,9 +189,9 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
-		typename BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -218,5 +199,5 @@ public:
 		}
 	}
 private:
-	BEFAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>* m_queue;
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>* m_queue;
 };

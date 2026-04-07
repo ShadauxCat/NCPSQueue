@@ -8,7 +8,7 @@ struct TypeName
 private:
 	static constexpr size_t prefix_size = sizeof("static std::string TypeName<") - 1;
 public:
-	static std::string GetName(bool useMove, TicketType ticketType, size_t batchCount)
+	static std::string GetName(PointerQueuePolicy pointerQueuePolicy, TicketType ticketType, size_t batchCount)
 	{
 #ifdef _WIN32
 		std::string ret = __FUNCTION__;
@@ -19,9 +19,14 @@ public:
 		ret = ret.substr(ret.find("t_Type = ") + 9);
 		ret = ret.substr(0, ret.find("]"));
 #endif
-		if (useMove)
+		switch (pointerQueuePolicy)
 		{
-			ret += " [moves]";
+		case PointerQueuePolicy::Preallocate:
+			ret += " [Preallocated]";
+			break;
+		case PointerQueuePolicy::Dynamic:
+			ret += " [Dynamic]";
+			break;
 		}
 		switch (ticketType)
 		{

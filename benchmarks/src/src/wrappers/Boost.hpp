@@ -10,12 +10,12 @@ class QueueWrapper<boost::lockfree::queue<t_ElementType>>
 {
 public:
 	QueueWrapper()
-		: m_queue(NUM_ELEMENTS)
+		: m_queue(benchmarkConfig::numElements)
 	{
 
 	}
 
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -23,15 +23,7 @@ public:
 			m_queue.push(data);
 		}
 	}
-	void enqueueMove(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.push(std::move(data));
-		}
-	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
@@ -54,7 +46,7 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
@@ -67,13 +59,13 @@ private:
 };
 
 template <typename t_ElementType>
-using BoostBoundedQueue = boost::lockfree::queue<t_ElementType, boost::lockfree::fixed_sized<true>, boost::lockfree::capacity<NUM_ELEMENTS>>;
+using BoostBoundedQueue = boost::lockfree::queue<t_ElementType, boost::lockfree::fixed_sized<true>, boost::lockfree::capacity<benchmarkConfig::numElements>>;
 
 template<typename t_ElementType>
 class QueueWrapper<BoostBoundedQueue<t_ElementType>>
 {
 public:
-	void enqueue(size_t nElements, size_t offset)
+	void enqueue(size_t nElements, size_t offset, int tid)
 	{
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -81,15 +73,7 @@ public:
 			m_queue.push(data);
 		}
 	}
-	void enqueueMove(size_t nElements)
-	{
-		for (size_t i = 0; i < nElements; ++i)
-		{
-			t_ElementType data = t_ElementType();
-			m_queue.push(std::move(data));
-		}
-	}
-	void dequeue(size_t nElements)
+	void dequeue(size_t nElements, int tid)
 	{
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
@@ -112,7 +96,7 @@ public:
 		}
 #endif
 	}
-	void dequeueEmpty(size_t nElements)
+	void dequeueEmpty(size_t nElements, int tid)
 	{
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)

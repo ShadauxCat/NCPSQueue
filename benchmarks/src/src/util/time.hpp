@@ -1,6 +1,7 @@
 #pragma once
 
 #if defined(_WIN32)
+#   define WIN32_LEAN_AND_MEAN
 #	define NOMINMAX
 #	include <Windows.h>
 	using ssize_t = SSIZE_T;
@@ -65,25 +66,25 @@ void timeFn(std::function<void()> fn)
 
 
 template<typename t_QueueWrapper>
-void latencyTestPing(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2)
+void latencyTestPing(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2, int tid, size_t batchsize)
 {
 	++started;
 	while (timer.load() == -1) {}
-	for (size_t i = 0; i < NUM_ELEMENTS/100; ++i)
+	for (size_t i = 0; i < benchmarkConfig::numElements/10; ++i)
 	{
-		wrapper1->enqueue(1, 0);
-		wrapper2->dequeue(1);
+		wrapper1->enqueue(batchsize, 0, tid);
+		wrapper2->dequeue(batchsize, tid);
 	}
 	timer.store(SteadyNow());
 }
 
 template<typename t_QueueWrapper>
-void latencyTestPong(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2)
+void latencyTestPong(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2, int tid, size_t batchsize)
 {
 	++started;
-	for (size_t i = 0; i < NUM_ELEMENTS/100; ++i)
+	for (size_t i = 0; i < benchmarkConfig::numElements/10; ++i)
 	{
-		wrapper1->dequeue(1);
-		wrapper2->enqueue(1, 0);
+		wrapper1->dequeue(batchsize, tid);
+		wrapper2->enqueue(batchsize, 0, tid);
 	}
 }

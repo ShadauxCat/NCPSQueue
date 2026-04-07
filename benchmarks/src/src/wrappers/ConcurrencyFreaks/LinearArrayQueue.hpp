@@ -6,7 +6,7 @@
 
 #define HAS_LINEARARRAYQUEUE
 
-template<typename t_ElementType>
-class QueueWrapper<LinearArrayQueue<t_ElementType>> : public ConcurrencyFreaksBaseWrapper<LinearArrayQueue, t_ElementType>
+template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
+class QueueWrapper<LinearArrayQueue<t_ElementType>, TicketType::NONE, 0, t_PointerQueuePolicy> : public ConcurrencyFreaksBaseWrapper<LinearArrayQueue, t_ElementType, t_PointerQueuePolicy>
 {
 };

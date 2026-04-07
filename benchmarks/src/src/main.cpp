@@ -7,6 +7,7 @@
 #include <mutex>
 #include <assert.h>
 #include <unordered_map>
+#include <conio.h>
 #include "util/math.hpp"
 
 #include "config.hpp"
@@ -45,21 +46,23 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 		exit(1);
 	}
 	values.clear();
-	std::cout << "\033[1;32m" << type << " " << operation << " " << producers << " " << consumers << "--> Verified! " << count << " elements (" << NUM_ELEMENTS << " adjusted for thread count) are valid.\033[0m" << std::endl;
+	std::cout << "\033[1;32m" << type << " " << operation << " " << producers << " " << consumers << "--> Verified! " << count << " elements (" << benchmarkConfig::numElements << " adjusted for thread count) are valid.\033[0m" << std::endl;
 }
 #endif
 
 
-template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NONE, size_t t_BatchSize = 0>
-void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueThreads, bool useMoves = false)
+template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NONE, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
+void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueThreads, bool canDoEnqueueAndDequeueOnly = true)
 {
-	size_t adjustedNumElements = NUM_ELEMENTS;
+	size_t adjustedNumElements = benchmarkConfig::numElements;
 	while(adjustedNumElements % enqueueThreads != 0 || adjustedNumElements % dequeueThreads != 0)
 	{
 		--adjustedNumElements;
 	}
 	size_t nEnqueueElements = adjustedNumElements / enqueueThreads;
 	size_t nDequeueElements = adjustedNumElements / dequeueThreads;
+
+	size_t batchSize = t_BatchSize == 0 ? 1 : t_BatchSize;
 
 	std::vector<int64_t> dequeues;
 	dequeues.resize(dequeueThreads);
@@ -68,179 +71,191 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	std::vector<int64_t> times[5];
 	for (auto& timeVect : times)
 	{
-		timeVect.resize(nIters);
+		timeVect.resize(benchmarkConfig::nIters);
 	}
 
-	for (int iter = 0; iter < nIters; ++iter)
+	for (int iter = 0; iter < benchmarkConfig::nIters; ++iter)
 	{
-		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize> separateEnqueueDequeueWrapper;
-		if(enqueueThreads == 1 || dequeueThreads == 1)
+		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
+		if constexpr (benchmarkTests::EnqueueOnly)
 		{
-			// Time the enqueues only.
-			std::vector<std::thread> threads;
-			
-			size_t numEnqueuesToActuallyDo = enqueueThreads;
-			size_t actualNEnqueueElements = nEnqueueElements;
-			if(dequeueThreads != 1)
+			if ((enqueueThreads == 1 || dequeueThreads == 1) && canDoEnqueueAndDequeueOnly)
 			{
-				// Most queues operate faster single-threaded, and since we're only measuring raw enqueue performance once (when dequeue threads == 1),
-				// we can just set it to 1 thread on all the other scenarios to make the benchmarks run faster.
-				numEnqueuesToActuallyDo = 1;
-				actualNEnqueueElements = adjustedNumElements;
-			}
-			threads.reserve(numEnqueuesToActuallyDo);
+				// Time the enqueues only.
+				std::vector<std::thread> threads;
 
-			for (size_t i = 0; i < numEnqueuesToActuallyDo; ++i)
-			{
-				std::function<void()> enqueueFunc = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>::enqueue, &separateEnqueueDequeueWrapper, actualNEnqueueElements, actualNEnqueueElements*i);
-				threads.emplace_back(
-					std::bind(
-						timeFn,
-						enqueueFunc
-					)
-				);
-	#if PIN_THREADS
-	#ifdef _WIN32
-				if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
+				size_t numEnqueuesToActuallyDo = enqueueThreads;
+				size_t actualNEnqueueElements = nEnqueueElements;
+				if (dequeueThreads != 1)
 				{
-					abort();
+					// Most queues operate faster single-threaded, and since we're only measuring raw enqueue performance once (when dequeue threads == 1),
+					// we can just set it to 1 thread on all the other scenarios to make the benchmarks run faster.
+					numEnqueuesToActuallyDo = 1;
+					actualNEnqueueElements = adjustedNumElements;
 				}
-	#else
-				cpu_set_t cpuset;
-				pthread_t thread = threads.back().native_handle();
+				threads.reserve(numEnqueuesToActuallyDo);
 
-				CPU_ZERO(&cpuset);
-				CPU_SET((i % std::thread::hardware_concurrency()), &cpuset);
-				if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+				for (size_t i = 0; i < numEnqueuesToActuallyDo; ++i)
 				{
-					abort();
-				}
-	#endif
-	#endif
-			}
-			while(started.load() < numEnqueuesToActuallyDo) {}
-			started.store(0);
-			int64_t start = SteadyNow();
-			timer.store(start);
-			for (auto& thread : threads)
-			{
-				thread.join();
-			}
-			times[0][iter] = timer.exchange(-1) - start;
-		}
-		if(enqueueThreads == 1)
-		{
-			// Time the dequeues only.
-			std::vector<std::thread> threads;
-			threads.reserve(dequeueThreads);
-
-			for (size_t i = 0; i < dequeueThreads; ++i)
-			{
-				std::function<void()> dequeueFunc = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>::dequeue, &separateEnqueueDequeueWrapper, nDequeueElements);
-				threads.emplace_back(
-					std::bind(
-						timeFn,
-						dequeueFunc
-					)
-				);
-#if PIN_THREADS
+					std::function<void()> enqueueFunc = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>::enqueue, &separateEnqueueDequeueWrapper, actualNEnqueueElements, actualNEnqueueElements * i, (int)i);
+					threads.emplace_back(
+						std::bind(
+							timeFn,
+							enqueueFunc
+						)
+					);
+					if constexpr (benchmarkConfig::pinThreads)
+					{
 #ifdef _WIN32
-				if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
-				{
-					abort();
-				}
+						if (!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
+						{
+							abort();
+						}
 #else
-				cpu_set_t cpuset;
-				pthread_t thread = threads.back().native_handle();
+						cpu_set_t cpuset;
+						pthread_t thread = threads.back().native_handle();
 
-				CPU_ZERO(&cpuset);
-				CPU_SET((i % std::thread::hardware_concurrency()), &cpuset);
-				if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
-				{
-					abort();
+						CPU_ZERO(&cpuset);
+						CPU_SET((i % std::thread::hardware_concurrency()), &cpuset);
+						if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+						{
+							abort();
+						}
+#endif
+					}
 				}
-#endif
-#endif
+				while (started.load() < numEnqueuesToActuallyDo) {}
+				started.store(0);
+				int64_t start = SteadyNow();
+				timer.store(start);
+				for (auto& thread : threads)
+				{
+					thread.join();
+				}
+				times[0][iter] = timer.exchange(-1) - start;
 			}
-			while(started.load() < dequeueThreads) {}
-			started.store(0);
-			int64_t start = SteadyNow();
-			timer.store(start);
-			for (auto& thread : threads)
+		}
+		if constexpr (benchmarkTests::DequeueOnly)
+		{
+			if (enqueueThreads == 1 && canDoEnqueueAndDequeueOnly)
 			{
-				thread.join();
-			}
-			times[1][iter] = timer.exchange(-1) - start;
-#ifdef VERIFY
-			verify(TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize), 12, enqueueThreads, dequeueThreads, adjustedNumElements);
+				// Time the dequeues only.
+				std::vector<std::thread> threads;
+				threads.reserve(dequeueThreads);
+
+				for (size_t i = 0; i < dequeueThreads; ++i)
+				{
+					std::function<void()> dequeueFunc = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>::dequeue, &separateEnqueueDequeueWrapper, nDequeueElements, (int)i);
+					threads.emplace_back(
+						std::bind(
+							timeFn,
+							dequeueFunc
+						)
+					);
+					if constexpr (benchmarkConfig::pinThreads)
+					{
+#ifdef _WIN32
+						if (!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
+						{
+							abort();
+						}
+#else
+						cpu_set_t cpuset;
+						pthread_t thread = threads.back().native_handle();
+
+						CPU_ZERO(&cpuset);
+						CPU_SET((i % std::thread::hardware_concurrency()), &cpuset);
+						if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+						{
+							abort();
+						}
 #endif
+					}
+				}
+				while (started.load() < dequeueThreads) {}
+				started.store(0);
+				int64_t start = SteadyNow();
+				timer.store(start);
+				for (auto& thread : threads)
+				{
+					thread.join();
+				}
+				times[1][iter] = timer.exchange(-1) - start;
+#ifdef VERIFY
+				verify(TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize), 12, enqueueThreads, dequeueThreads, adjustedNumElements);
+#endif
+			}
 		}
 
+		if constexpr(benchmarkTests::Concurrent)
 		{
 			// Time both happening concurrently.
-			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize> dualWrapper;
+			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> dualWrapper;
 			std::vector<std::thread> threads;
 			threads.reserve(enqueueThreads + dequeueThreads);
 
+			int tid = 0;
 			size_t enq = 0;
 			size_t deq = 0;
 			for (;;)
 			{
 				if (++deq <= dequeueThreads)
 				{
-					std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>::dequeue, &dualWrapper, nDequeueElements);
+					std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>::dequeue, &dualWrapper, nDequeueElements, tid++);
 					threads.emplace_back(
 						std::bind(
 							timeFn,
 							fn
 						)
 					);
-#if PIN_THREADS
+					if constexpr (benchmarkConfig::pinThreads)
+					{
 #ifdef _WIN32
-					if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << ((enq + deq) % std::thread::hardware_concurrency())))
-					{
-						abort();
-					}
+						if (!SetThreadAffinityMask(threads.back().native_handle(), 1 << ((enq + deq) % std::thread::hardware_concurrency())))
+						{
+							abort();
+						}
 #else
-					cpu_set_t cpuset;
-					pthread_t thread = threads.back().native_handle();
+						cpu_set_t cpuset;
+						pthread_t thread = threads.back().native_handle();
 
-					CPU_ZERO(&cpuset);
-					CPU_SET(((enq + deq) % std::thread::hardware_concurrency()), &cpuset);
-					if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
-					{
-						abort();
+						CPU_ZERO(&cpuset);
+						CPU_SET(((enq + deq) % std::thread::hardware_concurrency()), &cpuset);
+						if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+						{
+							abort();
+						}
+#endif
 					}
-#endif
-#endif
 				}
 				if (++enq <= enqueueThreads)
 				{
-					std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>::enqueue, &dualWrapper, nEnqueueElements, nEnqueueElements*(enq - 1));
+					std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>::enqueue, &dualWrapper, nEnqueueElements, nEnqueueElements*(enq - 1), tid++);
 					threads.emplace_back(
 						std::bind(
 							timeFn,
 							fn
 						)
 					);
-#if PIN_THREADS
+					if constexpr (benchmarkConfig::pinThreads)
+					{
 #ifdef _WIN32
-					if(!SetThreadAffinityMask(threads.back().native_handle(), 1 << ((enq + deq) % std::thread::hardware_concurrency())))
-					{
-						abort();
-					}
+						if (!SetThreadAffinityMask(threads.back().native_handle(), 1 << ((enq + deq) % std::thread::hardware_concurrency())))
+						{
+							abort();
+						}
 #else
-					cpu_set_t cpuset;
-					pthread_t thread = threads.back().native_handle();
+						cpu_set_t cpuset;
+						pthread_t thread = threads.back().native_handle();
 
-					CPU_ZERO(&cpuset);
-					CPU_SET(((enq + deq) % std::thread::hardware_concurrency()), &cpuset);
-					if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset))
-					{
-						abort();
+						CPU_ZERO(&cpuset);
+						CPU_SET(((enq + deq) % std::thread::hardware_concurrency()), &cpuset);
+						if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset))
+						{
+							abort();
+						}
+#endif
 					}
-#endif
-#endif
 				}
 				if (enq >= enqueueThreads && deq >= dequeueThreads)
 				{
@@ -257,171 +272,189 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 			times[2][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
-			verify(TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize), 3, enqueueThreads, dequeueThreads, adjustedNumElements);
+			verify(TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize), 3, enqueueThreads, dequeueThreads, adjustedNumElements);
 #endif
 		}
 
-		if(enqueueThreads == 1)
+		if constexpr (benchmarkTests::DequeueFromEmpty)
 		{
-			// Time dequeues from an empty queue
-			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize> emptyWrapper;
-			std::vector<std::thread> threads;
-			threads.reserve(dequeueThreads);
-
-			for (size_t i = 0; i < dequeueThreads; ++i)
+			if (enqueueThreads == 1)
 			{
-				std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>::dequeueEmpty, &emptyWrapper, nDequeueElements * 10);
-				threads.emplace_back(
+				// Time dequeues from an empty queue
+				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> emptyWrapper;
+				std::vector<std::thread> threads;
+				threads.reserve(dequeueThreads);
+
+				for (size_t i = 0; i < dequeueThreads; ++i)
+				{
+					std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>::dequeueEmpty, &emptyWrapper, nDequeueElements * 10, (int)i);
+					threads.emplace_back(
+						std::bind(
+							timeFn,
+							fn
+						)
+					);
+					if constexpr (benchmarkConfig::pinThreads)
+					{
+#ifdef _WIN32
+						if (!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
+						{
+							abort();
+						}
+#else
+						cpu_set_t cpuset;
+						pthread_t thread = threads.back().native_handle();
+
+						CPU_ZERO(&cpuset);
+						CPU_SET((i % std::thread::hardware_concurrency()), &cpuset);
+						if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+						{
+							abort();
+						}
+#endif
+					}
+				}
+				while (started.load() < dequeueThreads) {}
+				started.store(0);
+				int64_t start = SteadyNow();
+				timer.store(start);
+				for (auto& thread : threads)
+				{
+					thread.join();
+				}
+				times[3][iter] = timer.exchange(-1) - start;
+			}
+		}
+
+		if constexpr (benchmarkTests::LatencyPingPong)
+		{
+			if (enqueueThreads == 1 && dequeueThreads == 1)
+			{
+				// Time latency
+				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper1;
+				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper2;
+
+				auto pingThread = std::thread(
 					std::bind(
-						timeFn,
-						fn
+						latencyTestPing<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>>,
+						&wrapper1,
+						&wrapper2,
+						0,
+						batchSize
 					)
 				);
-#if PIN_THREADS
+				auto pongThread = std::thread(
+					std::bind(
+						latencyTestPong<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>>,
+						&wrapper1,
+						&wrapper2,
+						1,
+						batchSize
+					)
+				);
+				if constexpr (benchmarkConfig::pinThreads)
+				{
 #ifdef _WIN32
-				if (!SetThreadAffinityMask(threads.back().native_handle(), 1 << (i % std::thread::hardware_concurrency())))
-				{
-					abort();
-				}
+					if (!SetThreadAffinityMask(pingThread.native_handle(), 1 << (0 % std::thread::hardware_concurrency())))
+					{
+						abort();
+					}
+					if (!SetThreadAffinityMask(pongThread.native_handle(), 1 << (1 % std::thread::hardware_concurrency())))
+					{
+						abort();
+					}
 #else
-				cpu_set_t cpuset;
-				pthread_t thread = threads.back().native_handle();
+					cpu_set_t cpuset;
+					pthread_t thread = pingThread.native_handle();
 
-				CPU_ZERO(&cpuset);
-				CPU_SET((i % std::thread::hardware_concurrency()), &cpuset);
-				if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
-				{
-					abort();
+					CPU_ZERO(&cpuset);
+					CPU_SET((0 % std::thread::hardware_concurrency()), &cpuset);
+					if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+					{
+						abort();
+					}
+
+					thread = pongThread.native_handle();
+
+					CPU_ZERO(&cpuset);
+					CPU_SET((1 % std::thread::hardware_concurrency()), &cpuset);
+					if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
+					{
+						abort();
+					}
+#endif
 				}
-#endif
-#endif
+				while (started.load() < dequeueThreads) {}
+				started.store(0);
+				int64_t start = SteadyNow();
+				timer.store(start);
+				pingThread.join();
+				pongThread.join();
+				times[4][iter] = timer.exchange(-1) - start;
 			}
-			while(started.load() < dequeueThreads) {}
-			started.store(0);
-			int64_t start = SteadyNow();
-			timer.store(start);
-			for (auto& thread : threads)
-			{
-				thread.join();
-			}
-			times[3][iter] = timer.exchange(-1) - start;
 		}
+	}
 
+	if constexpr (benchmarkTests::EnqueueOnly)
+	{
+		if (dequeueThreads == 1)
+		{
+			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 1 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+				OpsPerSecond(median(times[0]), adjustedNumElements) << "\t" <<
+				OpsPerSecond(Q3(times[0]), adjustedNumElements) << "\t" <<
+				OpsPerSecond(Q1(times[0]), adjustedNumElements) << std::endl;
+		}
+	}
+	
+	if constexpr (benchmarkTests::DequeueOnly)
+	{
+		if (enqueueThreads == 1)
+		{
+			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 2 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+				OpsPerSecond(median(times[1]), adjustedNumElements) << "\t" <<
+				OpsPerSecond(Q3(times[1]), adjustedNumElements) << "\t" <<
+				OpsPerSecond(Q1(times[1]), adjustedNumElements) << std::endl;
+		}
+	}
+	
+	if constexpr (benchmarkTests::Concurrent)
+	{
+		std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 3 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			OpsPerSecond(median(times[2]), adjustedNumElements) << "\t" <<
+			OpsPerSecond(Q3(times[2]), adjustedNumElements) << "\t" <<
+			OpsPerSecond(Q1(times[2]), adjustedNumElements) << std::endl;
+	}
+
+
+	if constexpr (benchmarkTests::DequeueFromEmpty)
+	{
+		if (enqueueThreads == 1)
+		{
+			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 4 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+				OpsPerSecond(median(times[3]), adjustedNumElements * 10) << "\t" <<
+				OpsPerSecond(Q3(times[3]), adjustedNumElements * 10) << "\t" <<
+				OpsPerSecond(Q1(times[3]), adjustedNumElements * 10) << std::endl;
+		}
+	}
+
+	if constexpr (benchmarkTests::LatencyPingPong)
+	{
 		if (enqueueThreads == 1 && dequeueThreads == 1)
 		{
-			// Time latency
-			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize> wrapper1;
-			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize> wrapper2;
-
-			auto pingThread = std::thread(
-				std::bind(
-					latencyTestPing<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>>,
-					&wrapper1,
-					&wrapper2
-				)
-			);
-			auto pongThread = std::thread(
-				std::bind(
-					latencyTestPong<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize>>,
-					&wrapper1,
-					&wrapper2
-				)
-			);
-#if PIN_THREADS
-#ifdef _WIN32
-			if (!SetThreadAffinityMask(pingThread.native_handle(), 1 << (0 % std::thread::hardware_concurrency())))
-			{
-				abort();
-			}
-			if (!SetThreadAffinityMask(pongThread.native_handle(), 1 << (1 % std::thread::hardware_concurrency())))
-			{
-				abort();
-			}
-#else
-			cpu_set_t cpuset;
-			pthread_t thread = pingThread.native_handle();
-
-			CPU_ZERO(&cpuset);
-			CPU_SET((0 % std::thread::hardware_concurrency()), &cpuset);
-			if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
-			{
-				abort();
-			}
-			
-			thread = pongThread.native_handle();
-
-			CPU_ZERO(&cpuset);
-			CPU_SET((1 % std::thread::hardware_concurrency()), &cpuset);
-			if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0)
-			{
-				abort();
-			}
-#endif
-#endif
-			while (started.load() < dequeueThreads) {}
-			started.store(0);
-			int64_t start = SteadyNow();
-			timer.store(start);
-			pingThread.join();
-			pongThread.join();
-			times[4][iter] = timer.exchange(-1) - start;
+			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 5 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+				Latency(median(times[4]), benchmarkConfig::numElements/10) / batchSize / 2 << "\t" <<
+				Latency(Q1(times[4]), benchmarkConfig::numElements/10) / batchSize / 2 << "\t" <<
+				Latency(Q3(times[4]), benchmarkConfig::numElements/10) / batchSize / 2 << std::endl;
 		}
-	}
-
-	if(dequeueThreads == 1)
-	{
-		std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 1 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-			OpsPerSecond(mean(times[0]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(Max(times[0]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(Min(times[0]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(median(times[0]), adjustedNumElements) << "\t" <<
-			OpsPerSecondIqr(times[0], adjustedNumElements) << std::endl;
-	}
-		
-	if(enqueueThreads == 1)
-	{
-		std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 2 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-			OpsPerSecond(mean(times[1]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(Max(times[1]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(Min(times[1]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(median(times[1]), adjustedNumElements) << "\t" <<
-			OpsPerSecondIqr(times[1], adjustedNumElements) << std::endl;
-	}
-		
-	std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 3 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-		OpsPerSecond(mean(times[2]), adjustedNumElements) << "\t" <<
-		OpsPerSecond(Max(times[2]), adjustedNumElements) << "\t" <<
-		OpsPerSecond(Min(times[2]), adjustedNumElements) << "\t" <<
-		OpsPerSecond(median(times[2]), adjustedNumElements) << "\t" <<
-		OpsPerSecondIqr(times[2], adjustedNumElements) << std::endl;
-		
-
-	if (enqueueThreads == 1)
-	{
-		std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 4 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-			OpsPerSecond(mean(times[3]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(Max(times[3]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(Min(times[3]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(median(times[3]), adjustedNumElements) << "\t" <<
-			OpsPerSecondIqr(times[3], adjustedNumElements) << std::endl;
-	}
-	if (enqueueThreads == 1 && dequeueThreads == 1)
-	{
-		std::cout << TypeName<t_QueueType>::GetName(useMoves, t_TicketType, t_BatchSize) << "\t" << 5 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-			OpsPerSecond(mean(times[4]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(Max(times[4]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(Min(times[4]), adjustedNumElements * 10) << "\t" <<
-			OpsPerSecond(median(times[4]), adjustedNumElements) << "\t" <<
-			OpsPerSecondIqr(times[4], adjustedNumElements) << std::endl;
 	}
 }
 
-template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NONE, size_t t_BatchSize = 0>
-void RunTestsOnQueueType(bool useMoves = false)
+template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NONE, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
+void RunTestsOnQueueType(bool canDoEnqueueAndDequeueOnly = true)
 {
 	for (size_t i = MIN_PRODUCERS; i <= MAX_PRODUCERS; ++i) {
 		for (size_t j = MIN_CONSUMERS; j <= MAX_CONSUMERS; ++j) {
-			RunTestsOnQueueTypeWithThreadCounts<t_ElementType, t_QueueType, t_TicketType, t_BatchSize>(i, j, useMoves);
+			RunTestsOnQueueTypeWithThreadCounts<t_ElementType, t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>(i, j, canDoEnqueueAndDequeueOnly);
 		}
 	}
 }
@@ -431,7 +464,7 @@ void PrintEmpty()
 {
 	for (size_t i = MIN_PRODUCERS; i <= MAX_PRODUCERS; ++i) {
 		for (size_t j = MIN_CONSUMERS; j <= MAX_CONSUMERS; ++j) {
-			std::cout << TypeName<t_QueueType>::GetName(false, TicketType::NONE, 0) << "\t" << 0 << "\t" << 0 << "\t" << 0 << "\t" << 0 << std::endl;
+			std::cout << TypeName<t_QueueType>::GetName(PointerQueuePolicy::None, TicketType::NONE, 0) << "\t" << 0 << "\t" << 0 << "\t" << 0 << "\t" << 0 << std::endl;
 		}
 	}
 }
@@ -464,51 +497,89 @@ void RunTestsOnElementType()
 #endif
 
 #ifdef HAS_BITNEXT
-	RunTestsOnQueueType<t_ElementType, BitNextQueue<t_ElementType>>();
-	RunTestsOnQueueType<t_ElementType, BitNextLazyHeadQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, BitNextQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, BitNextQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, BitNextLazyHeadQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, BitNextLazyHeadQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_CR
 	// Excluded: Crashes
-	//RunTestsOnQueueType<t_ElementType, CRDoubleLinkQueue<t_ElementType>>();
-	RunTestsOnQueueType<t_ElementType, CRTurnQueue<t_ElementType>>();
+	//RunTestsOnQueueType<t_ElementType, CRDoubleLinkQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	//RunTestsOnQueueType<t_ElementType, CRDoubleLinkQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, CRTurnQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, CRTurnQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_FAAARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, FAAArrayQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, FAAArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, FAAArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_KOGANPETRANK
-	RunTestsOnQueueType<t_ElementType, KoganPetrankQueueCHP<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, KoganPetrankQueueCHP<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, KoganPetrankQueueCHP<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LAZYINDEXARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, LazyIndexArrayQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, LazyIndexArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, LazyIndexArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LCRQ
-	RunTestsOnQueueType<t_ElementType, LCRQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, LCRQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, LCRQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LINEARARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, LinearArrayQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, LinearArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, LinearArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LOG2ARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, Log2ArrayQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, Log2ArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, Log2ArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_MICHAELSCOTTQUEUE
-	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_CHASEWORKSTEALINGDEQUE
-	RunTestsOnQueueType<t_ElementType, xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
+		TicketType::NONE, 0, PointerQueuePolicy::Dynamic
+	>()
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
+		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
+	>();
 #endif
 
 #ifdef HAS_KIRSCH
-	RunTestsOnQueueType<t_ElementType, xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
-	RunTestsOnQueueType<t_ElementType, xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
+		TicketType::NONE, 0, PointerQueuePolicy::Dynamic
+	>();
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
+	>();
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
+		TicketType::NONE, 0, PointerQueuePolicy::Dynamic
+	>();
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
+		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
+	>();
 #endif
 
 #ifdef HAS_XENIUM_MICHAELSCOTT
@@ -522,58 +593,95 @@ void RunTestsOnElementType()
 #endif
 
 #ifdef HAS_RAMALHETE
-	RunTestsOnQueueType<t_ElementType, xenium::ramalhete_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::ramalhete_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>
+		, TicketType::NONE, 0, PointerQueuePolicy::Dynamic
+	>();
+	RunTestsOnQueueType<
+		t_ElementType, 
+		xenium::ramalhete_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
+		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
+	>();
 #endif
 
 #ifdef HAS_VYUKOVBOUNDEDQUEUE
 	RunTestsOnQueueType<t_ElementType, xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
 #endif
 
-#ifdef HAS_BEFAST_UNBOUNDED
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
+#ifdef HAS_BEAST_UNBOUNDED
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
 
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NONE>();
 
 
 #endif
 
-#ifdef HAS_BEFAST_BOUNDED
-	/*RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, false>>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, 8192>, TicketType::NONE>();*/
+#ifdef HAS_BEAST_BOUNDED
+	// Ephemeral tickets aren't benchmarked on the bounded queue as there's no initialization that needs to be done on a ticket,
+	// ergo no real advantage of persistent over ephemeral.
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::NONE>();
 
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEFAST::ConcurrentBoundedQueue<t_ElementType, NUM_ELEMENTS, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::NONE>();
+
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::NONE>();
+
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::NONE>();
+
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NONE>();
 #endif
 }
 
@@ -583,20 +691,22 @@ int main()
 #ifdef VERIFY
 	RunTestsOnElementType<int>();
 #else
-#if BENCHMARK_CHAR
-	RunTestsOnElementType<char>();
-#endif
+	if constexpr (benchmarkTypes::Char)
+	{
+		RunTestsOnElementType<char>();
+	}
 
-#if BENCHMARK_INT64
-	RunTestsOnElementType<int64_t>();
-#endif
+	if constexpr (benchmarkTypes::Int64)
+	{
+		RunTestsOnElementType<int64_t>();
+	}
 
-#if BENCHMARK_FIXEDSTRING64BYTES
-	RunTestsOnElementType<FixedStaticString<64>, false>();
-#endif
+	if constexpr (benchmarkTypes::FixedString64Bytes)
+	{
+		RunTestsOnElementType<FixedStaticString<64>, false>();
+	}
 #endif
 	std::cout << "Done testing, press any key to exit." << std::endl;
-	std::string discard;
-	std::cin >> discard;
+	getch();
 }
 
