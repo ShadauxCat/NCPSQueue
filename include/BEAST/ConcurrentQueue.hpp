@@ -93,6 +93,11 @@
 #define BEAST_DEBUG(...)
 #endif
 
+#define memory_order_acquire memory_order_seq_cst
+#define memory_order_release memory_order_seq_cst
+#define memory_order_acq_rel memory_order_seq_cst
+#define memory_order_relaxed memory_order_seq_cst
+
 
 namespace BEAST
 {
@@ -480,7 +485,7 @@ public:
 
 	ssize_t Enqueue(t_ElementType& ticket)
 	{
-		ssize_t pos = m_writeIdx.load(std::memory_order_seq_cst);
+		ssize_t pos = m_writeIdx.load(std::memory_order_acquire);
 		for(;;)
 		{
 			ssize_t idx = pos & m_mask;
@@ -496,7 +501,7 @@ public:
 					// We will block on a loop until we're able to write.
 				}
 				failedRead.item = std::move(ticket);
-				failedRead.generation.store(writeGeneration, std::memory_order_seq_cst);
+				failedRead.generation.store(writeGeneration, std::memory_order_release);
 				return pos;
 			}
 		}
@@ -504,7 +509,7 @@ public:
 
 	bool Dequeue(t_ElementType& ticket, ssize_t maxPos = (std::numeric_limits<ssize_t>::max)())
 	{
-		ssize_t pos = m_readIdx.load(std::memory_order_seq_cst);
+		ssize_t pos = m_readIdx.load(std::memory_order_acquire);
 		for(;;)
 		{
 			if(pos >= maxPos)
@@ -515,14 +520,14 @@ public:
 			ssize_t idx = pos & m_mask;
 			int32_t readGeneration = (pos >> m_generationOp) + 1;
 			Element& failedRead = m_buffer[idx];
-			if(failedRead.generation.load(std::memory_order_seq_cst) != readGeneration)
+			if(failedRead.generation.load(std::memory_order_acquire) != readGeneration)
 			{
 				return false;
 			}
 			if(m_readIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_seq_cst))
 			{
 				ticket = std::move(failedRead.item);
-				failedRead.generation.store(-readGeneration, std::memory_order_seq_cst);
+				failedRead.generation.store(-readGeneration, std::memory_order_release);
 				return true;
 			}
 		}
@@ -1148,7 +1153,7 @@ public:
 		bool reattempt = m_subQueue.Dequeue(ticket);
 		if(!reattempt)
 		{
-			if(m_failedReads.load(std::memory_order_seq_cst) != 0)
+			if(m_failedReads.load(std::memory_order_acquire) != 0)
 			{
 				return false;
 			}
@@ -2155,3 +2160,8 @@ private:
 	std::atomic<ssize_t> m_outstanding;
 	BEAST_PAD_CACHELINE;
 };
+
+#undef memory_order_acquire
+#undef memory_order_release
+#undef memory_order_acq_rel
+#undef memory_order_relaxed
