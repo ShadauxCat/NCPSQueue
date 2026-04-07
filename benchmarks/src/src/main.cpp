@@ -7,7 +7,6 @@
 #include <mutex>
 #include <assert.h>
 #include <unordered_map>
-#include <conio.h>
 #include "util/math.hpp"
 
 #include "config.hpp"
@@ -326,7 +325,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 		}
 
-		if constexpr (benchmarkTests::LatencyPingPong)
+		if constexpr (benchmarkTests::LatencyPingPong && RUNMODE != MODE_VERIFY)
 		{
 			if (enqueueThreads == 1 && dequeueThreads == 1)
 			{
@@ -437,7 +436,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		}
 	}
 
-	if constexpr (benchmarkTests::LatencyPingPong)
+	if constexpr (benchmarkTests::LatencyPingPong && RUNMODE != MODE_VERIFY)
 	{
 		if (enqueueThreads == 1 && dequeueThreads == 1)
 		{
@@ -706,7 +705,7 @@ int main()
 		RunTestsOnElementType<FixedStaticString<64>, false>();
 	}
 #endif
-	std::cout << "Done testing, press any key to exit." << std::endl;
-	getch();
+	std::cout << "Done testing, press ENTER to exit." << std::endl;
+	getchar();
 }
 

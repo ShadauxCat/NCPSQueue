@@ -478,14 +478,14 @@ public:
 
 	ssize_t Enqueue(t_ElementType& ticket)
 	{
-		ssize_t pos = m_writeIdx.load(std::memory_order_acquire);
+		ssize_t pos = m_writeIdx.load(std::memory_order_seq_cst);
 		for(;;)
 		{
 			ssize_t idx = pos & m_mask;
 			int32_t writeGeneration = (pos >> m_generationOp) + 1;
 
 			Element& failedRead = m_buffer[idx];
-			if(m_writeIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_acq_rel))
+			if(m_writeIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_seq_cst))
 			{
 				while(failedRead.generation.load(std::memory_order_acquire) != -(writeGeneration - 1))
 				{
@@ -494,7 +494,7 @@ public:
 					// We will block on a loop until we're able to write.
 				}
 				failedRead.item = std::move(ticket);
-				failedRead.generation.store(writeGeneration, std::memory_order_release);
+				failedRead.generation.store(writeGeneration, std::memory_order_seq_cst);
 				return pos;
 			}
 		}
@@ -502,7 +502,7 @@ public:
 
 	bool Dequeue(t_ElementType& ticket, ssize_t maxPos = (std::numeric_limits<ssize_t>::max)())
 	{
-		ssize_t pos = m_readIdx.load(std::memory_order_acquire);
+		ssize_t pos = m_readIdx.load(std::memory_order_seq_cst);
 		for(;;)
 		{
 			if(pos >= maxPos)
@@ -513,14 +513,14 @@ public:
 			ssize_t idx = pos & m_mask;
 			int32_t readGeneration = (pos >> m_generationOp) + 1;
 			Element& failedRead = m_buffer[idx];
-			if(failedRead.generation.load(std::memory_order_acquire) != readGeneration)
+			if(failedRead.generation.load(std::memory_order_seq_cst) != readGeneration)
 			{
 				return false;
 			}
-			if(m_readIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_acq_rel))
+			if(m_readIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_seq_cst))
 			{
 				ticket = std::move(failedRead.item);
-				failedRead.generation.store(-readGeneration, std::memory_order_release);
+				failedRead.generation.store(-readGeneration, std::memory_order_seq_cst);
 				return true;
 			}
 		}
