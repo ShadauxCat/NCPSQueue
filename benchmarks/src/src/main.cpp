@@ -307,7 +307,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 		if constexpr (benchmarkTests::DequeueFromEmpty)
 		{
-			if (enqueueThreads == 1)
+			if (enqueueThreads == 1 && RUNMODE != MODE_VERIFY)
 			{
 				std::cout << "deq_empty(4)..." << std::flush;
 				// Time dequeues from an empty queue
