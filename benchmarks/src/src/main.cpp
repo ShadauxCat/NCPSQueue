@@ -424,11 +424,12 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				times[4][iter] = timer.exchange(-1) - start;
 			}
 		}
-#if RUNMODE != MODE_VALIDATE
+#if RUNMODE != MODE_VERIFY
 		std::cout << "\33[2K\r";
 #endif
 	}
 
+#if RUNMODE != MODE_VERIFY
 	if constexpr (benchmarkTests::EnqueueOnly)
 	{
 		if (dequeueThreads == 1)
@@ -481,6 +482,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::endl;
 		}
 	}
+#endif
 }
 
 template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NA, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
