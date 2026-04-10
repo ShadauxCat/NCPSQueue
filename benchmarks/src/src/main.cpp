@@ -105,7 +105,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
 		if constexpr (benchmarkTests::EnqueueOnly)
 		{
+#if RUNMODE == MODE_VERIFY
+			if (canDoEnqueueAndDequeueOnly)
+#else
 			if ((enqueueThreads == 1 || dequeueThreads == 1) && canDoEnqueueAndDequeueOnly)
+#endif
 			{
 				std::cout << "enq(1)..." << std::flush;
 				// Time the enqueues only.
@@ -164,7 +168,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		}
 		if constexpr (benchmarkTests::DequeueOnly)
 		{
+#if RUNMODE == MODE_VERIFY
+			if (canDoEnqueueAndDequeueOnly)
+#else
 			if (enqueueThreads == 1 && canDoEnqueueAndDequeueOnly)
+#endif
 			{
 				std::cout << "deq(2)..." << std::flush;
 				// Time the dequeues only.
