@@ -24,20 +24,20 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 	{
 		if (values.find(i) == values.end())
 		{
-			std::cout << "\033[1;31m" << type << " " << operation << " " << producers << " " << consumers << "--> ERROR: VALUE " << i << " WAS NOT FOUND IN THE QUEUE RESULTS.\033[0m" << std::endl;
+			std::cout << "\033[1;31m--> ERROR: VALUE " << i << " WAS NOT FOUND IN THE QUEUE RESULTS.\033[0m" << std::endl;
 			valid = false;
 			continue;
 		}
 		if (values.at(i) != 1)
 		{
-			std::cout << "\033[1;31m" << type << " " << operation << " " << producers << " " << consumers << "--> ERROR: VALUE " << i << " WAS DEQUEUED " << values.at(i) << " TIMES!\033[0m" << std::endl;
+			std::cout << "\033[1;31m--> ERROR: VALUE " << i << " WAS DEQUEUED " << values.at(i) << " TIMES!\033[0m" << std::endl;
 			valid = false;
 		}
 		totalCount += values.at(i);
 	}
 	if (totalCount != count)
 	{
-		std::cout << "\033[1;31m" << type << " " << operation << " " << producers << " " << consumers << "--> ERROR: Total dequeue count " << totalCount << " does not match expected " << count << "\033[0m" << std::endl;
+		std::cout << "\033[1;31m--> ERROR: Total dequeue count " << totalCount << " does not match expected " << count << "\033[0m" << std::endl;
 		valid = false;
 	}
 	if (!valid)
@@ -45,7 +45,7 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 		exit(1);
 	}
 	values.clear();
-	std::cout << "\033[1;32m" << type << " " << operation << " " << producers << " " << consumers << "--> Verified! " << count << " elements (" << benchmarkConfig::numElements << " adjusted for thread count) are valid.\033[0m" << std::endl;
+	std::cout << "\033[1;32m--> Verified! " << count << " elements (" << benchmarkConfig::numElements << " adjusted for thread count) are valid.\033[0m" << std::endl;
 }
 #endif
 
@@ -424,7 +424,9 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				times[4][iter] = timer.exchange(-1) - start;
 			}
 		}
+#if RUNMODE != MODE_VALIDATE
 		std::cout << "\33[2K\r";
+#endif
 	}
 
 	if constexpr (benchmarkTests::EnqueueOnly)
