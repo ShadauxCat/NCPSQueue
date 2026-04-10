@@ -471,7 +471,7 @@ public:
 	{
 		if(m_buffer)
 		{
-			memset(reinterpret_cast<void*>(m_buffer), 0, maxConcurrentTicketlessReads * sizeof(*m_buffer));
+			memset(reinterpret_cast<void*>(m_buffer), 0, detail::nextPowerOf2(maxConcurrentTicketlessReads) * sizeof(*m_buffer));
 		}
 	}
 
