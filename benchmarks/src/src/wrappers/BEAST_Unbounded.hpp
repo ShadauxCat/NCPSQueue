@@ -178,7 +178,7 @@ private:
 };
 
 template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::NONE>
+class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::NA>
 {
 public:
 	QueueWrapper()

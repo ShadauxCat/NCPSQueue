@@ -11,6 +11,7 @@ std::mutex valueLock;
 
 enum class TicketType
 {
+	NA,
 	NONE,
 	PERSISTENT,
 	EPHEMERAL,
@@ -24,7 +25,7 @@ enum class PointerQueuePolicy
 	Dynamic
 };
 
-template<typename t_QueueType, TicketType t_TicketType = TicketType::NONE, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
+template<typename t_QueueType, TicketType t_TicketType = TicketType::NA, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
 class QueueWrapper;
 
 #if defined(_WIN32)

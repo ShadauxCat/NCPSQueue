@@ -20,27 +20,27 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 {
 	bool valid = true;
 	int totalCount = 0;
-	for(int i = 0; i < count; ++i)
+	for (int i = 0; i < count; ++i)
 	{
-		if(values.find(i) == values.end())
+		if (values.find(i) == values.end())
 		{
 			std::cout << "\033[1;31m" << type << " " << operation << " " << producers << " " << consumers << "--> ERROR: VALUE " << i << " WAS NOT FOUND IN THE QUEUE RESULTS.\033[0m" << std::endl;
 			valid = false;
 			continue;
 		}
-		if(values.at(i) != 1)
+		if (values.at(i) != 1)
 		{
 			std::cout << "\033[1;31m" << type << " " << operation << " " << producers << " " << consumers << "--> ERROR: VALUE " << i << " WAS DEQUEUED " << values.at(i) << " TIMES!\033[0m" << std::endl;
 			valid = false;
 		}
 		totalCount += values.at(i);
 	}
-	if(totalCount != count)
+	if (totalCount != count)
 	{
 		std::cout << "\033[1;31m" << type << " " << operation << " " << producers << " " << consumers << "--> ERROR: Total dequeue count " << totalCount << " does not match expected " << count << "\033[0m" << std::endl;
 		valid = false;
 	}
-	if(!valid)
+	if (!valid)
 	{
 		exit(1);
 	}
@@ -49,12 +49,29 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 }
 #endif
 
+template<typename t_QueueType>
+struct BEAST_QueueSize
+{
+	static constexpr size_t size = 0;
+};
 
-template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NONE, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+struct BEAST_QueueSize<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>>
+{
+	static constexpr size_t size = t_BlockSize;
+};
+
+template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+struct BEAST_QueueSize<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_AllocatorType>>
+{
+	static constexpr size_t size = t_QueueSize;
+};
+
+template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NA, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
 void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueThreads, bool canDoEnqueueAndDequeueOnly = true)
 {
 	size_t adjustedNumElements = benchmarkConfig::numElements;
-	while(adjustedNumElements % enqueueThreads != 0 || adjustedNumElements % dequeueThreads != 0)
+	while (adjustedNumElements % enqueueThreads != 0 || adjustedNumElements % dequeueThreads != 0)
 	{
 		--adjustedNumElements;
 	}
@@ -73,13 +90,24 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		timeVect.resize(benchmarkConfig::nIters);
 	}
 
+	std::string name = TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize, true);
+	std::string elementName = TypeName<t_ElementType>::GetName(PointerQueuePolicy::None, TicketType::NA, 0);
+	char progress[5] = "|/-\\";
+
 	for (int iter = 0; iter < benchmarkConfig::nIters; ++iter)
 	{
+		std::cout << "(" << progress[iter % 4] << ") \033[1;33mRUNNING \033[1;35m" << name;
+		if (BEAST_QueueSize<t_QueueType>::size != 0)
+		{
+			std::cout << " \033[1;36m[Buffer: " << BEAST_QueueSize<t_QueueType>::size << "]";
+		}
+		std::cout << " \033[1;36m[Element: " << elementName << "] \033[1;36m[Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] \033[1;32m[Iteration " << iter << "]\033[0m tests: ";
 		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
 		if constexpr (benchmarkTests::EnqueueOnly)
 		{
 			if ((enqueueThreads == 1 || dequeueThreads == 1) && canDoEnqueueAndDequeueOnly)
 			{
+				std::cout << "enq(1)..." << std::flush;
 				// Time the enqueues only.
 				std::vector<std::thread> threads;
 
@@ -138,6 +166,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && canDoEnqueueAndDequeueOnly)
 			{
+				std::cout << "deq(2)..." << std::flush;
 				// Time the dequeues only.
 				std::vector<std::thread> threads;
 				threads.reserve(dequeueThreads);
@@ -186,8 +215,9 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 		}
 
-		if constexpr(benchmarkTests::Concurrent)
+		if constexpr (benchmarkTests::Concurrent)
 		{
+			std::cout << "conc(3)..." << std::flush;
 			// Time both happening concurrently.
 			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> dualWrapper;
 			std::vector<std::thread> threads;
@@ -229,7 +259,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				}
 				if (++enq <= enqueueThreads)
 				{
-					std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>::enqueue, &dualWrapper, nEnqueueElements, nEnqueueElements*(enq - 1), tid++);
+					std::function<void()> fn = std::bind(&QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>::enqueue, &dualWrapper, nEnqueueElements, nEnqueueElements * (enq - 1), tid++);
 					threads.emplace_back(
 						std::bind(
 							timeFn,
@@ -261,7 +291,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 					break;
 				}
 			}
-			while(started.load() < dequeueThreads + enqueueThreads) {}
+			while (started.load() < dequeueThreads + enqueueThreads) {}
 			started.store(0);
 			int64_t start = SteadyNow();
 			timer.store(start);
@@ -279,6 +309,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1)
 			{
+				std::cout << "deq_empty(4)..." << std::flush;
 				// Time dequeues from an empty queue
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> emptyWrapper;
 				std::vector<std::thread> threads;
@@ -329,6 +360,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && dequeueThreads == 1)
 			{
+				std::cout << "latency(5)..." << std::flush;
 				// Time latency
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper1;
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper2;
@@ -392,6 +424,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				times[4][iter] = timer.exchange(-1) - start;
 			}
 		}
+		std::cout << "\33[2K\r";
 	}
 
 	if constexpr (benchmarkTests::EnqueueOnly)
@@ -404,7 +437,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				OpsPerSecond(Q1(times[0]), adjustedNumElements) << std::endl;
 		}
 	}
-	
+
 	if constexpr (benchmarkTests::DequeueOnly)
 	{
 		if (enqueueThreads == 1)
@@ -415,7 +448,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				OpsPerSecond(Q1(times[1]), adjustedNumElements) << std::endl;
 		}
 	}
-	
+
 	if constexpr (benchmarkTests::Concurrent)
 	{
 		std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 3 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
@@ -441,14 +474,14 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		if (enqueueThreads == 1 && dequeueThreads == 1)
 		{
 			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 5 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-				Latency(median(times[4]), benchmarkConfig::numElements/10) / batchSize / 2 << "\t" <<
-				Latency(Q1(times[4]), benchmarkConfig::numElements/10) / batchSize / 2 << "\t" <<
-				Latency(Q3(times[4]), benchmarkConfig::numElements/10) / batchSize / 2 << std::endl;
+				Latency(median(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
+				Latency(Q1(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
+				Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::endl;
 		}
 	}
 }
 
-template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NONE, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
+template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NA, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
 void RunTestsOnQueueType(bool canDoEnqueueAndDequeueOnly = true)
 {
 	for (size_t i = MIN_PRODUCERS; i <= MAX_PRODUCERS; ++i) {
@@ -463,7 +496,7 @@ void PrintEmpty()
 {
 	for (size_t i = MIN_PRODUCERS; i <= MAX_PRODUCERS; ++i) {
 		for (size_t j = MIN_CONSUMERS; j <= MAX_CONSUMERS; ++j) {
-			std::cout << TypeName<t_QueueType>::GetName(PointerQueuePolicy::None, TicketType::NONE, 0) << "\t" << 0 << "\t" << 0 << "\t" << 0 << "\t" << 0 << std::endl;
+			std::cout << TypeName<t_QueueType>::GetName(PointerQueuePolicy::None, TicketType::NA, 0) << "\t" << 0 << "\t" << 0 << "\t" << 0 << "\t" << 0 << std::endl;
 		}
 	}
 }
@@ -496,88 +529,88 @@ void RunTestsOnElementType()
 #endif
 
 #ifdef HAS_BITNEXT
-	RunTestsOnQueueType<t_ElementType, BitNextQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, BitNextQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
-	RunTestsOnQueueType<t_ElementType, BitNextLazyHeadQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, BitNextLazyHeadQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, BitNextQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, BitNextQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, BitNextLazyHeadQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, BitNextLazyHeadQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_CR
 	// Excluded: Crashes
-	//RunTestsOnQueueType<t_ElementType, CRDoubleLinkQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	//RunTestsOnQueueType<t_ElementType, CRDoubleLinkQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
-	RunTestsOnQueueType<t_ElementType, CRTurnQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, CRTurnQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	//RunTestsOnQueueType<t_ElementType, CRDoubleLinkQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	//RunTestsOnQueueType<t_ElementType, CRDoubleLinkQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, CRTurnQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, CRTurnQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_FAAARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, FAAArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, FAAArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, FAAArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, FAAArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_KOGANPETRANK
-	RunTestsOnQueueType<t_ElementType, KoganPetrankQueueCHP<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, KoganPetrankQueueCHP<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, KoganPetrankQueueCHP<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, KoganPetrankQueueCHP<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LAZYINDEXARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, LazyIndexArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, LazyIndexArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, LazyIndexArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, LazyIndexArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LCRQ
-	RunTestsOnQueueType<t_ElementType, LCRQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, LCRQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, LCRQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, LCRQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LINEARARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, LinearArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, LinearArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, LinearArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, LinearArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_LOG2ARRAYQUEUE
-	RunTestsOnQueueType<t_ElementType, Log2ArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, Log2ArrayQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, Log2ArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, Log2ArrayQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_MICHAELSCOTTQUEUE
-	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Dynamic>();
-	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>, TicketType::NONE, 0, PointerQueuePolicy::Preallocate>();
+	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Dynamic>();
+	RunTestsOnQueueType<t_ElementType, MichaelScottQueue<t_ElementType>, TicketType::NA, 0, PointerQueuePolicy::Preallocate>();
 #endif
 
 #ifdef HAS_CHASEWORKSTEALINGDEQUE
 	RunTestsOnQueueType<
-		t_ElementType, 
-		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
-		TicketType::NONE, 0, PointerQueuePolicy::Dynamic
+		t_ElementType,
+		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+		TicketType::NA, 0, PointerQueuePolicy::Dynamic
 	>()
-	RunTestsOnQueueType<
-		t_ElementType, 
-		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
-		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
-	>();
+		RunTestsOnQueueType<
+		t_ElementType,
+		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+		TicketType::NA, 0, PointerQueuePolicy::Preallocate
+		>();
 #endif
 
 #ifdef HAS_KIRSCH
 	RunTestsOnQueueType<
-		t_ElementType, 
-		xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
-		TicketType::NONE, 0, PointerQueuePolicy::Dynamic
-	>();
-	RunTestsOnQueueType<
-		t_ElementType, 
+		t_ElementType,
 		xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
-		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
+		TicketType::NA, 0, PointerQueuePolicy::Dynamic
 	>();
 	RunTestsOnQueueType<
-		t_ElementType, 
-		xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
-		TicketType::NONE, 0, PointerQueuePolicy::Dynamic
+		t_ElementType,
+		xenium::kirsch_bounded_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+		TicketType::NA, 0, PointerQueuePolicy::Preallocate
 	>();
 	RunTestsOnQueueType<
-		t_ElementType, 
-		xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
-		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
+		t_ElementType,
+		xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+		TicketType::NA, 0, PointerQueuePolicy::Dynamic
+	>();
+	RunTestsOnQueueType<
+		t_ElementType,
+		xenium::kirsch_kfifo_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+		TicketType::NA, 0, PointerQueuePolicy::Preallocate
 	>();
 #endif
 
@@ -593,14 +626,14 @@ void RunTestsOnElementType()
 
 #ifdef HAS_RAMALHETE
 	RunTestsOnQueueType<
-		t_ElementType, 
+		t_ElementType,
 		xenium::ramalhete_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>
-		, TicketType::NONE, 0, PointerQueuePolicy::Dynamic
+		, TicketType::NA, 0, PointerQueuePolicy::Dynamic
 	>();
 	RunTestsOnQueueType<
-		t_ElementType, 
-		xenium::ramalhete_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
-		TicketType::NONE, 0, PointerQueuePolicy::Preallocate
+		t_ElementType,
+		xenium::ramalhete_queue<t_ElementType*, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
+		TicketType::NA, 0, PointerQueuePolicy::Preallocate
 	>();
 #endif
 
@@ -611,25 +644,25 @@ void RunTestsOnElementType()
 #ifdef HAS_BEAST_UNBOUNDED
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NA>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NA>();
 
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NA>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 10>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 100>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1000>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NA>();
 
 
 #endif

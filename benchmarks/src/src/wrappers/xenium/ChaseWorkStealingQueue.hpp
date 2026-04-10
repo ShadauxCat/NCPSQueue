@@ -10,7 +10,7 @@
 template<typename t_ElementType, PointerQueuePolicy t_PointerQueuePolicy>
 class QueueWrapper<
 	xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>, 
-	TicketType::NONE, 0, t_PointerQueuePolicy
+	TicketType::NA, 0, t_PointerQueuePolicy
 >
 {
 public:
