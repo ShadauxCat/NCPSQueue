@@ -492,7 +492,7 @@ public:
 			int32_t writeGeneration = (pos >> m_generationOp) + 1;
 
 			Element& failedRead = m_buffer[idx];
-			if(m_writeIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_seq_cst))
+			if(m_writeIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_acq_rel))
 			{
 				while(failedRead.generation.load(std::memory_order_acquire) != -(writeGeneration - 1))
 				{
@@ -524,7 +524,7 @@ public:
 			{
 				return false;
 			}
-			if(m_readIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_seq_cst))
+			if(m_readIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_acq_rel))
 			{
 				ticket = std::move(failedRead.item);
 				failedRead.generation.store(-readGeneration, std::memory_order_release);
@@ -615,7 +615,7 @@ protected:
 		ssize_t ret = buffer->DecRef(amount);
 		if(BEAST_UNLIKELY(ret == 0))
 		{
-			while(m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+			while(m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
 			{}
 			swapToEnd_(buffer);
 			m_reallocatingBuffer.store(false);
@@ -838,7 +838,7 @@ protected:
 			// When we get here, we use a simple atomic boolean as a spin lock.
 			// We perform an exchange() on it - if it returns false, that means we won the lottery
 			// because we were the first to set it true.
-			if(!m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+			if(!m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
 			{
 				fetchNextWriteBuffer_(element, buffer, 1);
 				m_reallocatingBuffer.store(false, std::memory_order_release);
@@ -963,7 +963,7 @@ public:
 					// When we get here, we use a simple atomic boolean as a spin lock.
 					// We perform an exchange() on it - if it returns false, that means we won the lottery
 					// because we were the first to set it true.
-					if(!m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+					if(!m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
 					{
 						fetchNextWriteBuffer_(element, buffer, count - i);
 						m_reallocatingBuffer.store(false, std::memory_order_release);
@@ -1075,7 +1075,7 @@ public:
 				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
 				// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
 				// we just return false; for more details on this logic, see the comments in getNextElement_()
-				if(!m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+				if(!m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
 				{
 					if(!fetchNextReadBuffer_(element, buffer, ticket))
 					{
@@ -1163,13 +1163,13 @@ public:
 		{
 			if(reattempt)
 			{
-				m_failedReads.fetch_sub(1, std::memory_order_seq_cst);
+				m_failedReads.fetch_sub(1, std::memory_order_release);
 			}
 			return true;
 		}
 		if(!reattempt)
 		{
-			m_failedReads.fetch_add(1, std::memory_order_seq_cst);
+			m_failedReads.fetch_add(1, std::memory_order_acq_rel);
 		}
 		ssize_t pos = m_subQueue.Enqueue(ticket);
 		for(;;)
@@ -1180,7 +1180,7 @@ public:
 			}
 			if(Dequeue(val, ticket))
 			{
-				m_failedReads.fetch_sub(1, std::memory_order_seq_cst);
+				m_failedReads.fetch_sub(1, std::memory_order_release);
 				return true;
 			}
 			m_subQueue.Enqueue(ticket);
@@ -1230,7 +1230,7 @@ public:
 					Buffer* buffer = m_buffer;
 					for(;;)
 					{
-						if(!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_seq_cst))
+						if(!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
 						{
 							if(!m_queue->fetchNextReadBuffer_(m_element, m_buffer, m_remaining))
 							{
