@@ -6,8 +6,8 @@
 
 #define HAS_BEAST_UNBOUNDED
 
-template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::PERSISTENT>
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>, TicketType::PERSISTENT, 0, PointerQueuePolicy::None>
 {
 public:
 	void enqueue(size_t nElements, size_t offset, int tid)
@@ -59,8 +59,8 @@ private:
 	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };
 
-template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch, size_t t_BatchSize>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::BATCH, t_BatchSize>
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, size_t t_BatchSize, template<typename> typename t_AllocatorType>
+class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>, TicketType::BATCH, t_BatchSize, PointerQueuePolicy::None>
 {
 	std::atomic<int> totalRemaining{ 0 };
 public:
@@ -125,8 +125,8 @@ private:
 	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };
 
-template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::EPHEMERAL>
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>, TicketType::EPHEMERAL, 0, PointerQueuePolicy::None>
 {
 public:
 	void enqueue(size_t nElements, size_t offset, int tid)
@@ -177,8 +177,8 @@ private:
 	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch> m_queue;
 };
 
-template<typename t_ElementType, ssize_t t_BlockSize, bool t_EnableBatch>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch>, TicketType::NA>
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>, TicketType::NONE, 0, PointerQueuePolicy::None>
 {
 public:
 	QueueWrapper()

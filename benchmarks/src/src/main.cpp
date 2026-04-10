@@ -217,7 +217,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 		if constexpr (benchmarkTests::Concurrent)
 		{
-			std::cout << "conc(3)..." << std::flush;
+			std::cout << "enq+deq(3)..." << std::flush;
 			// Time both happening concurrently.
 			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> dualWrapper;
 			std::vector<std::thread> threads;
@@ -583,12 +583,12 @@ void RunTestsOnElementType()
 		t_ElementType,
 		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
 		TicketType::NA, 0, PointerQueuePolicy::Dynamic
-	>()
-		RunTestsOnQueueType<
+	>();
+	RunTestsOnQueueType<
 		t_ElementType,
 		xenium::chase_work_stealing_deque<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>,
 		TicketType::NA, 0, PointerQueuePolicy::Preallocate
-		>();
+	>();
 #endif
 
 #ifdef HAS_KIRSCH
@@ -644,25 +644,25 @@ void RunTestsOnElementType()
 #ifdef HAS_BEAST_UNBOUNDED
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NA>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NA>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
 
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NA>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NONE>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 10>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 100>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1000>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::PERSISTENT>();
 	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NA>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NONE>();
 
 
 #endif
