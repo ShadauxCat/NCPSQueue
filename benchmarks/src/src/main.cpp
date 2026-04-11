@@ -15,6 +15,23 @@
 #include "util/typename.hpp"
 #include "util/FixedStaticString.hpp"
 
+#ifdef _WIN32
+#define COLOR_RED ""
+#define COLOR_GREEN ""
+#define COLOR_YELLOW ""
+#define COLOR_CYAN ""
+#define COLOR_MAGENTA ""
+#define COLOR_RESET ""
+#else
+#define COLOR_RED "\033[1;31m"
+#define COLOR_GREEN "\033[1;32m"
+#define COLOR_YELLOW "\033[1;33m"
+#define COLOR_CYAN "\033[1;36m"
+#define COLOR_MAGENTA "\033[1;35m"
+#define COLOR_RESET "\033[0m"
+#endif
+
+
 #ifdef VERIFY
 void verify(std::string type, int operation, int producers, int consumers, int count)
 {
@@ -24,20 +41,29 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 	{
 		if (values.find(i) == values.end())
 		{
-			std::cout << "\033[1;31m--> ERROR: VALUE " << i << " WAS NOT FOUND IN THE QUEUE RESULTS.\033[0m" << std::endl;
+#if _WIN32
+			__debugbreak();
+#endif
+			std::cout << COLOR_RED "--> ERROR: VALUE " << i << " WAS NOT FOUND IN THE QUEUE RESULTS." COLOR_RESET << std::endl;
 			valid = false;
 			continue;
 		}
 		if (values.at(i) != 1)
 		{
-			std::cout << "\033[1;31m--> ERROR: VALUE " << i << " WAS DEQUEUED " << values.at(i) << " TIMES!\033[0m" << std::endl;
+#if _WIN32
+			__debugbreak();
+#endif
+			std::cout << COLOR_RED "--> ERROR: VALUE " << i << " WAS DEQUEUED " << values.at(i) << " TIMES!" COLOR_RESET << std::endl;
 			valid = false;
 		}
 		totalCount += values.at(i);
 	}
 	if (totalCount != count)
 	{
-		std::cout << "\033[1;31m--> ERROR: Total dequeue count " << totalCount << " does not match expected " << count << "\033[0m" << std::endl;
+#if _WIN32
+		__debugbreak();
+#endif
+		std::cout << COLOR_RED "--> ERROR: Total dequeue count " << totalCount << " does not match expected " << count << COLOR_RESET << std::endl;
 		valid = false;
 	}
 	if (!valid)
@@ -45,7 +71,7 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 		exit(1);
 	}
 	values.clear();
-	std::cout << "\033[1;32m--> Verified! " << count << " elements (" << benchmarkConfig::numElements << " adjusted for thread count) are valid.\033[0m" << std::endl;
+	std::cout << COLOR_GREEN "--> Verified! " << count << " elements (" << benchmarkConfig::numElements << " adjusted for thread count) are valid." COLOR_RESET << std::endl;
 }
 #endif
 
@@ -96,12 +122,12 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 	for (int iter = 0; iter < benchmarkConfig::nIters; ++iter)
 	{
-		std::cout << "(" << progress[iter % 4] << ") \033[1;33mRUNNING \033[1;35m" << name;
+		std::cout << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << name;
 		if (BEAST_QueueSize<t_QueueType>::size != 0)
 		{
-			std::cout << " \033[1;36m[Buffer: " << BEAST_QueueSize<t_QueueType>::size << "]";
+			std::cout << COLOR_CYAN " [Buffer: " << BEAST_QueueSize<t_QueueType>::size << "]";
 		}
-		std::cout << " \033[1;36m[Element: " << elementName << "] \033[1;36m[Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] \033[1;32m[Iteration " << iter << "]\033[0m tests: ";
+		std::cout << COLOR_CYAN " [Element: " << elementName << "] [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
 		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
 		if constexpr (benchmarkTests::EnqueueOnly)
 		{

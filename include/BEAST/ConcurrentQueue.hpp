@@ -93,11 +93,6 @@
 #define BEAST_DEBUG(...)
 #endif
 
-#define memory_order_acquire memory_order_seq_cst
-#define memory_order_release memory_order_seq_cst
-#define memory_order_acq_rel memory_order_seq_cst
-#define memory_order_relaxed memory_order_seq_cst
-
 
 namespace BEAST
 {
@@ -208,8 +203,7 @@ public:
 
 	Buffer()
 		: m_next(nullptr),
-		m_refCount(t_BlockSize + 2)  // One for each element, one for the writeBuffer pointer, and one for the readBuffer pointer
-		,
+		m_refCount(t_BlockSize + 2),  // One for each element, one for the writeBuffer pointer, and one for the readBuffer pointer
 		m_readPos(reinterpret_cast<BufferElement*>(m_buffer)),
 		m_writePos(reinterpret_cast<BufferElement*>(m_buffer)),
 		m_end(reinterpret_cast<BufferElement*>(m_buffer) + t_BlockSize)
@@ -350,6 +344,17 @@ public:
 	}
 
 	/**
+	 * @brief   Get a pointer to the start of the queue. Used along with Generation to calculate the absolute
+	 * position of an element in the queue, which is used to order themm within the priority subqueue.
+	 *
+	 * @return  A pointer to the start of the buffer.
+	*/
+	inline BufferElement const* GetStart() const
+	{
+		return reinterpret_cast<BufferElement const*>(m_buffer);
+	}
+
+	/**
 	 * @brief   Decrement the ref count.
 	 *
 	 * @details This isn't a traditional reference count. Rather than dealing in terms of the number of current references,
@@ -389,6 +394,16 @@ public:
 		}
 	}
 
+	int32_t GetGeneration()
+	{
+		return m_generation;
+	}
+
+	void SetGeneration(int32_t generation)
+	{
+		m_generation = generation;
+	}
+
 private:
 	BEAST_PAD_CACHELINE;
 	std::atomic<Buffer*> m_next;
@@ -399,6 +414,7 @@ private:
 	BEAST_PAD_CACHELINE;
 	std::atomic<BufferElement*> m_writePos;
 	BEAST_PAD_CACHELINE;
+	int32_t m_generation{ 0 };
 
 	char m_buffer[t_BlockSize * sizeof(BufferElement)];
 	BufferElement const* const m_end;
@@ -461,95 +477,111 @@ struct BEAST::ReadReservationTicket
 template <typename t_ElementType, template<typename> typename t_AllocatorType>
 class alignas(128) BEAST::detail::ReservationTicketSubQueue
 {
-public:
-	ReservationTicketSubQueue(size_t const maxConcurrentTicketlessReads) 
-		: m_buffer(maxConcurrentTicketlessReads == 0 ? nullptr : m_allocator.allocate(detail::nextPowerOf2(maxConcurrentTicketlessReads)))
-		, m_readIdx(0)
-		, m_writeIdx(0)
-		, m_mask(detail::nextPowerOf2(maxConcurrentTicketlessReads) - 1)
-		, m_generationOp(detail::log2(detail::nextPowerOf2(maxConcurrentTicketlessReads)))
-	{
-		if(m_buffer)
-		{
-			memset(reinterpret_cast<void*>(m_buffer), 0, detail::nextPowerOf2(maxConcurrentTicketlessReads) * sizeof(*m_buffer));
-		}
-	}
-
-	~ReservationTicketSubQueue()
-	{
-		if(m_buffer)
-		{
-			m_allocator.deallocate(m_buffer, m_mask + 1);
-		}
-	}
-
-	ssize_t Enqueue(t_ElementType& ticket)
-	{
-		ssize_t pos = m_writeIdx.load(std::memory_order_acquire);
-		for(;;)
-		{
-			ssize_t idx = pos & m_mask;
-			int32_t writeGeneration = (pos >> m_generationOp) + 1;
-
-			Element& failedRead = m_buffer[idx];
-			if(m_writeIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_acq_rel))
-			{
-				while(failedRead.generation.load(std::memory_order_acquire) != -(writeGeneration - 1))
-				{
-					// Another thread is likely trying to read this one still.
-					// This can happen even when max concurrent reads is not exceeded, but is rare.
-					// We will block on a loop until we're able to write.
-				}
-				failedRead.item = std::move(ticket);
-				failedRead.generation.store(writeGeneration, std::memory_order_release);
-				return pos;
-			}
-		}
-	}
-
-	bool Dequeue(t_ElementType& ticket, ssize_t maxPos = (std::numeric_limits<ssize_t>::max)())
-	{
-		ssize_t pos = m_readIdx.load(std::memory_order_acquire);
-		for(;;)
-		{
-			if(pos >= maxPos)
-			{
-				return false;
-			}
-
-			ssize_t idx = pos & m_mask;
-			int32_t readGeneration = (pos >> m_generationOp) + 1;
-			Element& failedRead = m_buffer[idx];
-			if(failedRead.generation.load(std::memory_order_acquire) != readGeneration)
-			{
-				return false;
-			}
-			if(m_readIdx.compare_exchange_weak(pos, pos + 1, std::memory_order_acq_rel))
-			{
-				ticket = std::move(failedRead.item);
-				failedRead.generation.store(-readGeneration, std::memory_order_release);
-				return true;
-			}
-		}
-	}
-
 private:
+	enum class State
+	{
+		Free,
+		Pending,
+		Ready,
+		Clearing
+	};
 	struct Element
 	{
-		std::atomic<int32_t> generation;
-		t_ElementType item;
+		std::atomic<State> state;
+		size_t pos;
+		t_ElementType data;
 	};
+
+public:
+	ReservationTicketSubQueue(size_t const maxConcurrentTicketlessReads)
+		: m_buffer(maxConcurrentTicketlessReads == 0 ? nullptr : m_allocator.allocate(maxConcurrentTicketlessReads))
+		, m_capacity(maxConcurrentTicketlessReads)
+	{
+		if (m_buffer)
+		{
+			memset(reinterpret_cast<void*>(m_buffer), 0, maxConcurrentTicketlessReads * sizeof(*m_buffer));
+		}
+	}
+
+	void Enqueue(t_ElementType& element, size_t pos)
+	{
+		Element* internalElement = GetFree();
+		internalElement->pos = pos;
+		internalElement->data = std::move(element);
+		internalElement->state.store(State::Ready, std::memory_order_release);
+		BEAST_DEBUG("Stored %d in %p", pos, internalElement);
+		m_count.fetch_add(1, std::memory_order_release);
+	}
+
+	bool Dequeue(t_ElementType& result)
+	{
+		if (m_count.load(std::memory_order_acquire) == 0)
+		{
+			return false;
+		}
+		Element* element = RemoveFirst();
+		if (element == nullptr)
+		{
+			return false;
+		}
+		result = std::move(element->data);
+		element->state.store(State::Free, std::memory_order_release);
+		BEAST_DEBUG("Extracted %d from %p", element->pos, element);
+		m_count.fetch_sub(1, std::memory_order_release);
+		return true;
+	}
+private:
+	Element* RemoveFirst()
+	{
+		for (;;)
+		{
+			Element* low = nullptr;
+			for (size_t i = 0; i < m_capacity; ++i)
+			{
+				if (m_buffer[i].state.load(std::memory_order_acquire) == State::Ready && (low == nullptr || m_buffer[i].pos < low->pos))
+				{
+					low = m_buffer + i;
+				}
+			}
+			if (low == nullptr)
+			{
+				return nullptr;
+			}
+			State desiredState = State::Ready;
+			if (low->state.compare_exchange_strong(desiredState, State::Clearing, std::memory_order_acq_rel))
+			{
+				return low;
+			}
+		}
+	}
+
+	Element* GetFree()
+	{
+		for (size_t i = 0; i < m_capacity; ++i)
+		{
+			State desiredState = State::Free;
+			if (m_buffer[i].state.compare_exchange_strong(desiredState, State::Pending, std::memory_order_acq_rel))
+			{
+				return m_buffer + i;
+			}
+		}
+		// should not be possible if max concurrent is not exceeded
+		return nullptr;
+	}
+
+	void Free(Element* element)
+	{
+		element->inUse.store(false, std::memory_order_release);
+	}
 
 	t_AllocatorType<Element> m_allocator;
 
+	BEAST_PAD_CACHELINE;
+	std::atomic<int> m_count{ 0 };
+	BEAST_PAD_CACHELINE;
+
+	size_t const m_capacity;
 	Element* m_buffer;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_readIdx;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_writeIdx;
-	BEAST_PAD_CACHELINE;
-	size_t const m_mask;
-	size_t const m_generationOp;
 };
 
 /**
@@ -641,6 +673,7 @@ protected:
 		BEAST_CONCURRENT_QUEUE_ASSERT(buffer != m_writeBuffer.load());
 		BEAST_CONCURRENT_QUEUE_ASSERT(buffer != m_readBuffer.load());
 		BEAST_CONCURRENT_QUEUE_ASSERT(buffer != tail);
+		buffer->SetGeneration(tail->GetGeneration() + 1);
 		tail->SetNext(buffer);
 		buffer->SetNext(nullptr);
 		m_tail.store(buffer, std::memory_order_release);
@@ -708,6 +741,7 @@ protected:
 				// If we get nullptr back from this, then we actually need to allocate.
 				newBuffer = m_allocator.allocate(1);
 				new (newBuffer) Buffer();
+				newBuffer->SetGeneration(buffer->GetGeneration() + 1);
 				buffer->SetNext(newBuffer);
 				if(buffer == m_tail.load(std::memory_order_acquire))
 				{
@@ -1151,40 +1185,28 @@ public:
 	{
 		ReadReservationTicket ticket;
 		bool reattempt = m_subQueue.Dequeue(ticket);
-		if(!reattempt)
+		if (!reattempt)
 		{
-			if(m_failedReads.load(std::memory_order_acquire) != 0)
+			if (m_failedReads.load(std::memory_order_acquire) != 0)
 			{
 				return false;
 			}
 			InitializeReservationTicket(ticket);
 		}
-		if(Dequeue(val, ticket))
+		if (Dequeue(val, ticket))
 		{
-			if(reattempt)
+			if (reattempt)
 			{
-				m_failedReads.fetch_sub(1, std::memory_order_release);
+				m_failedReads.fetch_sub(1, std::memory_order_acq_rel);
 			}
 			return true;
 		}
-		if(!reattempt)
+		if (!reattempt)
 		{
 			m_failedReads.fetch_add(1, std::memory_order_acq_rel);
 		}
-		ssize_t pos = m_subQueue.Enqueue(ticket);
-		for(;;)
-		{
-			if(m_subQueue.Dequeue(ticket, pos) == false)
-			{
-				return false;
-			}
-			if(Dequeue(val, ticket))
-			{
-				m_failedReads.fetch_sub(1, std::memory_order_release);
-				return true;
-			}
-			m_subQueue.Enqueue(ticket);
-		}
+		m_subQueue.Enqueue(ticket, (ticket.ptr - ticket.buffer->GetStart()) + ticket.buffer->GetGeneration() * t_BlockSize);
+		return false;
 	}
 
 	/**
@@ -1778,20 +1800,8 @@ public:
 		{
 			m_failedWrites.fetch_add(1, std::memory_order_acq_rel);
 		}
-		ssize_t enqueuePos = m_writeSubQueue.Enqueue(ticket);
-		for(;;)
-		{
-			if(m_writeSubQueue.Dequeue(ticket, enqueuePos) == false)
-			{
-				return false;
-			}
-			if(Enqueue(val, ticket))
-			{
-				m_failedWrites.fetch_sub(1, std::memory_order_acq_rel);
-				return true;
-			}
-			m_writeSubQueue.Enqueue(ticket);
-		}
+		m_writeSubQueue.Enqueue(ticket, ((BufferElement*)ticket.ptr) - m_buffer + ticket.generation * t_QueueSize);
+		return false;
 	}
 
 	/**
@@ -1816,8 +1826,6 @@ public:
 		{
 			return false;
 		}
-		auto generation = ticket.generation;
-		auto ptr = ticket.ptr;
 		if(Dequeue(val, ticket))
 		{
 			if(reattempt)
@@ -1830,22 +1838,8 @@ public:
 		{
 			m_failedReads.fetch_add(1, std::memory_order_acq_rel);
 		}
-		ssize_t pos = m_readSubQueue.Enqueue(ticket);
-		for(;;)
-		{
-			if(m_readSubQueue.Dequeue(ticket, pos) == false)
-			{
-				return false;
-			}
-			auto generation = ticket.generation;
-			auto ptr = ticket.ptr;
-			if(Dequeue(val, ticket))
-			{
-				m_failedReads.fetch_sub(1, std::memory_order_acq_rel);
-				return true;
-			}
-			m_readSubQueue.Enqueue(ticket);
-		}
+		m_readSubQueue.Enqueue(ticket, ((BufferElement*)ticket.ptr) - m_buffer + ticket.generation * t_QueueSize);
+		return false;
 	}
 
 	class BatchDequeueList
@@ -2160,8 +2154,3 @@ private:
 	std::atomic<ssize_t> m_outstanding;
 	BEAST_PAD_CACHELINE;
 };
-
-#undef memory_order_acquire
-#undef memory_order_release
-#undef memory_order_acq_rel
-#undef memory_order_relaxed

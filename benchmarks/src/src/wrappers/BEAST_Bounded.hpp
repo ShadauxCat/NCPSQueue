@@ -68,7 +68,7 @@ private:
 };
 
 template<typename t_ElementType, size_t t_NumElements>
-class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>, TicketType::NA>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
