@@ -26,6 +26,7 @@ import sys
 ########################################################################################################################
 
 _ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
+_IS_HOST_WINDOWS = platform.system() == "Windows"
 _IS_HOST_WSL = "microsoft" in platform.uname().release.lower()
 
 ########################################################################################################################
@@ -106,13 +107,14 @@ def main(rootPath):
 	externalPath = os.path.join(rootPath, "external")
 	buildPath = os.path.join(rootPath, "_buildenv-wsl" if _IS_HOST_WSL else "_buildenv")
 	activateScriptPath = os.path.join(_getEnvBinPath(buildPath), "activate")
+	activateCmd = f"{activateScriptPath}.bat" if _IS_HOST_WINDOWS else f"source ./{os.path.relpath(activateScriptPath, rootPath)}"
 
 	# Setup a local environment that we can use for building the project.
 	removeOldBuildEnv(buildPath)
 	createVirtualEnv(buildPath)
 	installDependencies(buildPath, externalPath)
 	
-	print(f"\nRun script to activate: {activateScriptPath}")
+	print(f"\nActivate the environment with the following command:\n\t{activateCmd}")
 
 ########################################################################################################################
 
