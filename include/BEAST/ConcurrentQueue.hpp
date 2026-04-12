@@ -509,7 +509,6 @@ public:
 		internalElement->pos = pos;
 		internalElement->data = std::move(element);
 		internalElement->state.store(State::Ready, std::memory_order_release);
-		BEAST_DEBUG("Stored %d in %p", pos, internalElement);
 		m_count.fetch_add(1, std::memory_order_release);
 	}
 
@@ -526,7 +525,6 @@ public:
 		}
 		result = std::move(element->data);
 		element->state.store(State::Free, std::memory_order_release);
-		BEAST_DEBUG("Extracted %d from %p", element->pos, element);
 		m_count.fetch_sub(1, std::memory_order_release);
 		return true;
 	}
