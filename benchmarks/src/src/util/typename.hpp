@@ -18,6 +18,7 @@ public:
 		std::string ret = __PRETTY_FUNCTION__;
 		ret = ret.substr(ret.find("t_Type = ") + 9);
 		ret = ret.substr(0, ret.find("]"));
+		ret = ret.substr(0, ret.find(";"));
 #endif
 		if (truncate)
 		{

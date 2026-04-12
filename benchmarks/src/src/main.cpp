@@ -7,6 +7,8 @@
 #include <mutex>
 #include <assert.h>
 #include <unordered_map>
+#include <sstream>
+#include <iomanip>
 #include "util/math.hpp"
 
 #include "config.hpp"
@@ -41,18 +43,12 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 	{
 		if (values.find(i) == values.end())
 		{
-#if _WIN32
-			__debugbreak();
-#endif
 			std::cout << COLOR_RED "--> ERROR: VALUE " << i << " WAS NOT FOUND IN THE QUEUE RESULTS." COLOR_RESET << std::endl;
 			valid = false;
 			continue;
 		}
 		if (values.at(i) != 1)
 		{
-#if _WIN32
-			__debugbreak();
-#endif
 			std::cout << COLOR_RED "--> ERROR: VALUE " << i << " WAS DEQUEUED " << values.at(i) << " TIMES!" COLOR_RESET << std::endl;
 			valid = false;
 		}
@@ -60,18 +56,18 @@ void verify(std::string type, int operation, int producers, int consumers, int c
 	}
 	if (totalCount != count)
 	{
-#if _WIN32
-		__debugbreak();
-#endif
 		std::cout << COLOR_RED "--> ERROR: Total dequeue count " << totalCount << " does not match expected " << count << COLOR_RESET << std::endl;
 		valid = false;
 	}
 	if (!valid)
 	{
+#if _WIN32
+		__debugbreak();
+#endif
 		exit(1);
 	}
 	values.clear();
-	std::cout << COLOR_GREEN "--> Verified! " << count << " elements (" << benchmarkConfig::numElements << " adjusted for thread count) are valid." COLOR_RESET << std::endl;
+	//std::cout << COLOR_GREEN "--> Verified! " << count << " elements (" << benchmarkConfig::numElements << " adjusted for thread count) are valid." COLOR_RESET << std::endl;
 }
 #endif
 
@@ -91,6 +87,24 @@ template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, templa
 struct BEAST_QueueSize<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_AllocatorType>>
 {
 	static constexpr size_t size = t_QueueSize;
+};
+
+template<typename t_QueueType>
+struct BEAST_BatchEnabled
+{
+	static constexpr bool enabled = false;
+};
+
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+struct BEAST_BatchEnabled<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>>
+{
+	static constexpr bool enabled = t_EnableBatch;
+};
+
+template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+struct BEAST_BatchEnabled<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_AllocatorType>>
+{
+	static constexpr bool enabled = t_EnableBatch;
 };
 
 template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NA, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
@@ -118,16 +132,24 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 	std::string name = TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize, true);
 	std::string elementName = TypeName<t_ElementType>::GetName(PointerQueuePolicy::None, TicketType::NA, 0);
+	std::stringstream outputLabelSS;
+	outputLabelSS << name << " (" << elementName;
+	if (BEAST_QueueSize<t_QueueType>::size != 0)
+	{
+		outputLabelSS << ", size " << BEAST_QueueSize<t_QueueType>::size;
+	}
+	if (BEAST_BatchEnabled<t_QueueType>::enabled)
+	{
+		outputLabelSS << ", +batch";
+	}
+	outputLabelSS << ")";
+	std::string outputLabel = outputLabelSS.str();
 	char progress[5] = "|/-\\";
 
 	for (int iter = 0; iter < benchmarkConfig::nIters; ++iter)
 	{
-		std::cout << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << name;
-		if (BEAST_QueueSize<t_QueueType>::size != 0)
-		{
-			std::cout << COLOR_CYAN " [Buffer: " << BEAST_QueueSize<t_QueueType>::size << "]";
-		}
-		std::cout << COLOR_CYAN " [Element: " << elementName << "] [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
+		std::cout << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << outputLabel;
+		std::cout << COLOR_CYAN " [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
 		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
 		if constexpr (benchmarkTests::EnqueueOnly)
 		{
@@ -137,7 +159,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			if ((enqueueThreads == 1 || dequeueThreads == 1) && canDoEnqueueAndDequeueOnly)
 #endif
 			{
-				std::cout << "enq(1)..." << std::flush;
+				std::cout << "enq..." << std::flush;
 				// Time the enqueues only.
 				std::vector<std::thread> threads;
 
@@ -200,7 +222,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			if (enqueueThreads == 1 && canDoEnqueueAndDequeueOnly)
 #endif
 			{
-				std::cout << "deq(2)..." << std::flush;
+				std::cout << "deq..." << std::flush;
 				// Time the dequeues only.
 				std::vector<std::thread> threads;
 				threads.reserve(dequeueThreads);
@@ -244,14 +266,16 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				}
 				times[1][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
-				verify(TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize), 12, enqueueThreads, dequeueThreads, adjustedNumElements);
+				verify(outputLabel, 12, enqueueThreads, dequeueThreads, adjustedNumElements);
+				std::cout << "\33[2K\r";
+				std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tseparate  " << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 			}
 		}
 
 		if constexpr (benchmarkTests::Concurrent)
 		{
-			std::cout << "enq+deq(3)..." << std::flush;
+			std::cout << "enq+deq..." << std::flush;
 			// Time both happening concurrently.
 			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> dualWrapper;
 			std::vector<std::thread> threads;
@@ -335,7 +359,9 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 			times[2][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
-			verify(TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize), 3, enqueueThreads, dequeueThreads, adjustedNumElements);
+			verify(outputLabel, 3, enqueueThreads, dequeueThreads, adjustedNumElements);
+			std::cout << "\33[2K\r";
+			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tconcurrent" << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t"  COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 		}
 
@@ -343,7 +369,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && RUNMODE != MODE_VERIFY)
 			{
-				std::cout << "deq_empty(4)..." << std::flush;
+				std::cout << "deq_empty(poll)..." << std::flush;
 				// Time dequeues from an empty queue
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> emptyWrapper;
 				std::vector<std::thread> threads;
@@ -394,7 +420,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && dequeueThreads == 1)
 			{
-				std::cout << "latency(5)..." << std::flush;
+				std::cout << "latency..." << std::flush;
 				// Time latency
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper1;
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper2;
@@ -468,7 +494,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (dequeueThreads == 1)
 		{
-			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 1 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenqueue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				OpsPerSecond(median(times[0]), adjustedNumElements) << "\t" <<
 				OpsPerSecond(Q3(times[0]), adjustedNumElements) << "\t" <<
 				OpsPerSecond(Q1(times[0]), adjustedNumElements) << std::endl;
@@ -479,7 +505,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (enqueueThreads == 1)
 		{
-			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 2 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdequeue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				OpsPerSecond(median(times[1]), adjustedNumElements) << "\t" <<
 				OpsPerSecond(Q3(times[1]), adjustedNumElements) << "\t" <<
 				OpsPerSecond(Q1(times[1]), adjustedNumElements) << std::endl;
@@ -488,7 +514,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 	if constexpr (benchmarkTests::Concurrent)
 	{
-		std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 3 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+		std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenq+deq  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 			OpsPerSecond(median(times[2]), adjustedNumElements) << "\t" <<
 			OpsPerSecond(Q3(times[2]), adjustedNumElements) << "\t" <<
 			OpsPerSecond(Q1(times[2]), adjustedNumElements) << std::endl;
@@ -499,7 +525,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (enqueueThreads == 1)
 		{
-			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 4 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdeq_empty\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				OpsPerSecond(median(times[3]), adjustedNumElements * 10) << "\t" <<
 				OpsPerSecond(Q3(times[3]), adjustedNumElements * 10) << "\t" <<
 				OpsPerSecond(Q1(times[3]), adjustedNumElements * 10) << std::endl;
@@ -510,7 +536,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (enqueueThreads == 1 && dequeueThreads == 1)
 		{
-			std::cout << TypeName<t_QueueType>::GetName(t_PointerQueuePolicy, t_TicketType, t_BatchSize) << "\t" << 5 << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tlatency  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				Latency(median(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
 				Latency(Q1(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
 				Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::endl;
@@ -757,10 +783,16 @@ void RunTestsOnElementType()
 
 int main()
 {
-	std::cout << std::fixed;
+	std::cout << std::fixed << std::setprecision(3);
+
 #ifdef VERIFY
+	std::cout << std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(10) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tRESULT" << std::endl;
+	std::cout << "---------------------------------------------------------------------------------------------------------------------------------" << std::endl;
 	RunTestsOnElementType<int>();
 #else
+	std::cout << std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(9) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tMEDIAN\t\tQ1\t\tQ3" << std::endl;
+	std::cout << "----------------------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl;
+
 	if constexpr (benchmarkTypes::Char)
 	{
 		RunTestsOnElementType<char>();
