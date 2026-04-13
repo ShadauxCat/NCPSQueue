@@ -148,10 +148,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 	for (int iter = 0; iter < benchmarkConfig::nIters; ++iter)
 	{
-		std::cout << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << outputLabel;
-		std::cout << COLOR_CYAN " [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
+		std::cerr << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << outputLabel;
+		std::cerr << COLOR_CYAN " [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
 		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
-		if constexpr (benchmarkTests::EnqueueOnly)
+
+		if constexpr (benchmarkTests::EnqueueOnly || benchmarkTests::DequeueOnly)
 		{
 #if RUNMODE == MODE_VERIFY
 			if (canDoEnqueueAndDequeueOnly)
@@ -159,7 +160,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			if ((enqueueThreads == 1 || dequeueThreads == 1) && canDoEnqueueAndDequeueOnly)
 #endif
 			{
-				std::cout << "enq..." << std::flush;
+				std::cerr << "enq..." << std::flush;
 				// Time the enqueues only.
 				std::vector<std::thread> threads;
 
@@ -214,6 +215,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				times[0][iter] = timer.exchange(-1) - start;
 			}
 		}
+
 		if constexpr (benchmarkTests::DequeueOnly)
 		{
 #if RUNMODE == MODE_VERIFY
@@ -222,7 +224,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			if (enqueueThreads == 1 && canDoEnqueueAndDequeueOnly)
 #endif
 			{
-				std::cout << "deq..." << std::flush;
+				std::cerr << "deq..." << std::flush;
 				// Time the dequeues only.
 				std::vector<std::thread> threads;
 				threads.reserve(dequeueThreads);
@@ -267,15 +269,15 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				times[1][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
 				verify(outputLabel, 12, enqueueThreads, dequeueThreads, adjustedNumElements);
-				std::cout << "\33[2K\r";
-				std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tseparate  " << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
+				std::cerr << "\33[2K\r";
+				std::cerr << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tseparate  " << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 			}
 		}
 
 		if constexpr (benchmarkTests::Concurrent)
 		{
-			std::cout << "enq+deq..." << std::flush;
+			std::cerr << "enq+deq..." << std::flush;
 			// Time both happening concurrently.
 			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> dualWrapper;
 			std::vector<std::thread> threads;
@@ -360,8 +362,8 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			times[2][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
 			verify(outputLabel, 3, enqueueThreads, dequeueThreads, adjustedNumElements);
-			std::cout << "\33[2K\r";
-			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tconcurrent" << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t"  COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
+			std::cerr << "\33[2K\r";
+			std::cerr << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tconcurrent" << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t"  COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 		}
 
@@ -369,7 +371,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && RUNMODE != MODE_VERIFY)
 			{
-				std::cout << "deq_empty(poll)..." << std::flush;
+				std::cerr << "deq_empty..." << std::flush;
 				// Time dequeues from an empty queue
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> emptyWrapper;
 				std::vector<std::thread> threads;
@@ -420,7 +422,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && dequeueThreads == 1)
 			{
-				std::cout << "latency..." << std::flush;
+				std::cerr << "latency..." << std::flush;
 				// Time latency
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper1;
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper2;
@@ -485,7 +487,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 		}
 #if RUNMODE != MODE_VERIFY
-		std::cout << "\33[2K\r";
+		std::cerr << "\33[2K\r";
 #endif
 	}
 
@@ -537,11 +539,12 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		if (enqueueThreads == 1 && dequeueThreads == 1)
 		{
 			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tlatency  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-				Latency(median(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
-				Latency(Q1(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
-				Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::endl;
+				std::setw(15) << Latency(median(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
+				std::setw(15) << Latency(Q1(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
+				std::setw(15) << Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::setw(0) << std::endl;
 		}
 	}
+
 #endif
 }
 
