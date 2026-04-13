@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
 import platform
 import csbuild
@@ -11,7 +11,6 @@ with csbuild.ToolchainGroup("gnu"):
 		
 csbuild.SetUserData("subdir", platform.system())
 
-
 with csbuild.Toolchain("msvc"):
 	csbuild.AddCompilerFlags("/EHsc", "/bigobj")
 	csbuild.AddCompilerFlags("/std:c++20")
@@ -20,7 +19,12 @@ with csbuild.Toolchain("msvc"):
 with csbuild.ToolchainGroup("gnu"):
 	csbuild.AddCompilerFlags("-std=c++20", "-pthread")
 	csbuild.AddLibraries("pthread")
-	csbuild.AddLibraryDirectories("external/tbb/gnu/lib")
+	
+	with csbuild.Platform("Darwin"):
+		csbuild.AddLibraryDirectories("external/tbb/mac/{architectureName}")
+		
+	with csbuild.Platform("Linux"):
+		csbuild.AddLibraryDirectories("external/tbb/linux/{architectureName}")
 
 with csbuild.Project("QueueTests", "src", []):
 	csbuild.SetOutputDirectory("bin")
@@ -33,16 +37,23 @@ with csbuild.Project("QueueTests", "src", []):
 		"external/xenium"
 	)
 
-	with csbuild.Target("debug"):
-		csbuild.AddLibraries("tbb12_debug")
+	with csbuild.Toolchain("msvc"):
+		with csbuild.Target("debug"):
+			csbuild.AddLibraries("tbb12_debug")
 
-	with csbuild.Target("fastdebug", "release"):
-		csbuild.AddLibraries("tbb12")
+		with csbuild.Target("fastdebug", "release"):
+			csbuild.AddLibraries("tbb12")
 
-
-	@csbuild.OnBuildFinished
-	def buildComplete(projects):
-		for f in glob.glob("external/tbb/win/bin/*".format(project=projects[0])):
+@csbuild.OnBuildFinished
+def buildComplete(projects):
+	archName = projects[0].architectureName
+	libDirName = {
+		"Windows": "win/bin",
+		"Linux": f"linux/{archName}",
+		"Darwin": f"mac/{archName}",
+	}.get(platform.system(), None)
+	if libDirName:
+		for f in glob.glob(f"external/tbb/{libDirName}/*"):
 			if os.path.isdir(f):
 				continue
 			basename = os.path.basename(f)
@@ -50,4 +61,4 @@ with csbuild.Project("QueueTests", "src", []):
 			if not os.path.exists(dest):
 				print("Copying {} to {}".format(f, dest))
 				shutil.copyfile(f, dest)
-	
+
