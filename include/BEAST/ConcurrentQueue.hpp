@@ -64,8 +64,6 @@
 #    define BEAST_CACHELINE_SIZE 128
 #endif
 
-#define BEAST_PAD_CACHELINE CachelinePad BEAST_CONCAT(BEAST_CONCAT(pad##_, __LINE__), __)
-
 #ifndef BEAST_CONCURRENT_QUEUE_DEBUG_ASSERTS
 #    define BEAST_CONCURRENT_QUEUE_DEBUG_ASSERTS 0
 #endif
@@ -99,8 +97,6 @@ namespace BEAST
 #if defined(_WIN32)
 	using ssize_t = SSIZE_T;
 #endif
-
-	typedef unsigned char CachelinePad[BEAST_CACHELINE_SIZE];
 	namespace detail
 	{
 		template <typename t_ElementType, size_t t_BlockSize>
@@ -192,7 +188,7 @@ namespace BEAST
  *          contained within this class.
  */
 template <typename t_ElementType, size_t t_BlockSize>
-class alignas(128) BEAST::detail::Buffer
+class alignas(BEAST_CACHELINE_SIZE) BEAST::detail::Buffer
 {
 public:
 	struct BufferElement
@@ -405,16 +401,11 @@ public:
 	}
 
 private:
-	BEAST_PAD_CACHELINE;
-	std::atomic<Buffer*> m_next;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_refCount;
-	BEAST_PAD_CACHELINE;
-	std::atomic<BufferElement*> m_readPos;
-	BEAST_PAD_CACHELINE;
-	std::atomic<BufferElement*> m_writePos;
-	BEAST_PAD_CACHELINE;
-	int32_t m_generation{ 0 };
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_next;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_refCount;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<BufferElement*> m_readPos;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<BufferElement*> m_writePos;
+	alignas(BEAST_CACHELINE_SIZE) int32_t m_generation{ 0 };
 
 	char m_buffer[t_BlockSize * sizeof(BufferElement)];
 	BufferElement const* const m_end;
@@ -460,7 +451,7 @@ struct BEAST::ReadReservationTicket
 };
 
 template <typename t_ElementType, template<typename> typename t_AllocatorType>
-class alignas(128) BEAST::detail::ReservationTicketSubQueue
+class alignas(BEAST_CACHELINE_SIZE) BEAST::detail::ReservationTicketSubQueue
 {
 private:
 	enum class State
@@ -559,11 +550,8 @@ private:
 
 	t_AllocatorType<Element> m_allocator;
 
-	BEAST_PAD_CACHELINE;
-	std::atomic<int> m_count{ 0 };
-	BEAST_PAD_CACHELINE;
-
-	size_t const m_capacity;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<int> m_count{ 0 };
+	alignas(BEAST_CACHELINE_SIZE) size_t const m_capacity;
 	Element* m_buffer;
 };
 
@@ -611,7 +599,7 @@ private:
  *                              be allocated after failed reads, and deallocated on subsequent successful reads.
  */
 template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-class alignas(128) BEAST::ConcurrentQueue
+class alignas(BEAST_CACHELINE_SIZE) BEAST::ConcurrentQueue
 {
 public:
 	using ReadReservationTicket = BEAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
@@ -1422,30 +1410,21 @@ public:
 
 protected:
 	// Cacheline padding prevents false sharing.
-	BEAST_PAD_CACHELINE;
 	// Read head, not necessarily the same as the write head
-	std::atomic<Buffer*> m_readBuffer;
-	BEAST_PAD_CACHELINE;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_readBuffer;
 	// Spin lock used when swapping buffers - not technically lock free, but lock free isn't always faster.
 	// And this is used rarely enough that the simplicity of the code around it is far more valuable.
 	// The performance improvement of making this lock free would be imperceptible, and the increased amount
 	// of code to get it to work right would likely bloat code size and cause more cache misses in execution.
-	std::atomic<bool> m_reallocatingBuffer;
-	BEAST_PAD_CACHELINE;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<bool> m_reallocatingBuffer;
 	// Write head, not necessarily the same as the read head
-	std::atomic<Buffer*> m_writeBuffer;
-	BEAST_PAD_CACHELINE;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_writeBuffer;
 	// Tail. Obviously.
-	std::atomic<Buffer*> m_tail;
-	BEAST_PAD_CACHELINE;
-	detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_subQueue;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_failedReads;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_outstanding;
-	BEAST_PAD_CACHELINE;
-
-	t_AllocatorType<Buffer> m_allocator;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_tail;
+	alignas(BEAST_CACHELINE_SIZE) detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_subQueue;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_failedReads;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
+	alignas(BEAST_CACHELINE_SIZE) t_AllocatorType<Buffer> m_allocator;
 };
 
 /**
@@ -1566,7 +1545,7 @@ struct BEAST::BoundedWriteReservationTicket
  *                              that do accept ticket parameters; those are alloc-free.
  */
 template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-class alignas(128) BEAST::ConcurrentBoundedQueue
+class alignas(BEAST_CACHELINE_SIZE) BEAST::ConcurrentBoundedQueue
 {
 public:
 	using ReadReservationTicket = BEAST::BoundedReadReservationTicket<t_ElementType>;
@@ -2107,21 +2086,13 @@ private:
 	}
 	constexpr static int64_t asserted = assertSize<c_generationOp>();
 
-	BEAST_PAD_CACHELINE;
-	std::atomic<size_t> m_readIdx;
-	BEAST_PAD_CACHELINE;
-	std::atomic<size_t> m_writeIdx;
-	BEAST_PAD_CACHELINE;
-	BufferElement m_buffer[c_adjustedSize];
-	BEAST_PAD_CACHELINE;
-	detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_readSubQueue;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_failedReads;
-	BEAST_PAD_CACHELINE;
-	detail::ReservationTicketSubQueue<WriteReservationTicket, t_AllocatorType> m_writeSubQueue;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_failedWrites;
-	BEAST_PAD_CACHELINE;
-	std::atomic<ssize_t> m_outstanding;
-	BEAST_PAD_CACHELINE;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<size_t> m_readIdx;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<size_t> m_writeIdx;
+	alignas(BEAST_CACHELINE_SIZE) BufferElement m_buffer[c_adjustedSize];
+	alignas(BEAST_CACHELINE_SIZE) detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_readSubQueue;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_failedReads;
+	alignas(BEAST_CACHELINE_SIZE) detail::ReservationTicketSubQueue<WriteReservationTicket, t_AllocatorType> m_writeSubQueue;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_failedWrites;
+	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
+	alignas(BEAST_CACHELINE_SIZE) bool pad;
 };
