@@ -33,6 +33,9 @@
 #define COLOR_RESET "\033[0m"
 #endif
 
+#if defined(__APPLE__) || defined(__MACH__)
+#include "mac_thread_affinity.hpp"
+#endif
 
 #ifdef VERIFY
 void verify(std::string type, int operation, int producers, int consumers, int count)
