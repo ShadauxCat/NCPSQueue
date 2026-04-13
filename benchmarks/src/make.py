@@ -8,22 +8,20 @@ import shutil
 
 with csbuild.ToolchainGroup("gnu"):
 	csbuild.AddCompilerFlags("-pthread")
-		
+
 csbuild.SetUserData("subdir", platform.system())
+csbuild.SetCxxLanguageStandard("c++20")
 
 with csbuild.Toolchain("msvc"):
 	csbuild.AddCompilerFlags("/EHsc", "/bigobj")
-	csbuild.AddCompilerFlags("/std:c++20")
 	csbuild.AddLibraryDirectories("external/tbb/win/lib")
-	
+
 with csbuild.ToolchainGroup("gnu"):
-	csbuild.AddCompilerFlags("-std=c++20", "-pthread")
-	csbuild.AddLibraries("pthread")
-	
 	with csbuild.Platform("Darwin"):
 		csbuild.AddLibraryDirectories("external/tbb/mac/{architectureName}")
-		
+
 	with csbuild.Platform("Linux"):
+		csbuild.AddLibraries("pthread")
 		csbuild.AddLibraryDirectories("external/tbb/linux/{architectureName}")
 
 with csbuild.Project("QueueTests", "src", []):
