@@ -61,7 +61,7 @@
     std::terminate();
 
 #ifndef BEAST_CACHELINE_SIZE
-#    define BEAST_CACHELINE_SIZE 64
+#    define BEAST_CACHELINE_SIZE 128
 #endif
 
 #define BEAST_PAD_CACHELINE CachelinePad BEAST_CONCAT(BEAST_CONCAT(pad##_, __LINE__), __)
