@@ -38,6 +38,10 @@ std::ofstream file;
 
 #define RECORD(arg) if(file.is_open()) { file << arg; } std::cout << arg
 
+#if defined(__APPLE__) || defined(__MACH__)
+#include "mac_thread_affinity.hpp"
+#endif
+
 #ifdef VERIFY
 void verify(std::string type, int operation, int producers, int consumers, int count)
 {
