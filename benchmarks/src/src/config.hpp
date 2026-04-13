@@ -40,8 +40,8 @@ namespace benchmarkTests
 	constexpr bool DequeueFromEmpty = true;
 	constexpr bool LatencyPingPong = true;
 }
-// Commenting out any of the below #include directives will disable the tests on it.
 
+// Commenting out any of the below #include directives will disable the tests on it.
 
 // std::deque + std::mutex
 #include "wrappers/deque.hpp"
@@ -52,7 +52,10 @@ namespace benchmarkTests
 // TBB
 #include "wrappers/TBB.hpp"
 
+// The following queues don't work correctly on ARM.
+#if !defined(__aarch64__) && !defined(_M_ARM64)
 // Queues from ConcurrencyFreaks
+
 #include "wrappers/ConcurrencyFreaks/BitNext.hpp"
 #include "wrappers/ConcurrencyFreaks/CR.hpp"
 #include "wrappers/ConcurrencyFreaks/FAAArrayQueue.hpp"
@@ -74,6 +77,8 @@ namespace benchmarkTests
 // Crashes
 //#include "wrappers/xenium/ChaseWorkStealingQueue.hpp"
 #include "wrappers/xenium/Kirsch.hpp"
+#endif
+
 #include "wrappers/xenium/MichaelScott.hpp"
 #include "wrappers/xenium/Nikolaev.hpp"
 #include "wrappers/xenium/RamalheteQueue.hpp"

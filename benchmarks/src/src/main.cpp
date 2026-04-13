@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <sstream>
 #include <iomanip>
+#include <fstream>
 #include "util/math.hpp"
 
 #include "config.hpp"
@@ -33,6 +34,9 @@
 #define COLOR_RESET "\033[0m"
 #endif
 
+std::ofstream file;
+
+#define RECORD(arg) if(file.is_open()) { file << arg; } std::cout << arg
 
 #ifdef VERIFY
 void verify(std::string type, int operation, int producers, int consumers, int count)
@@ -148,8 +152,8 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 	for (int iter = 0; iter < benchmarkConfig::nIters; ++iter)
 	{
-		std::cerr << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << outputLabel;
-		std::cerr << COLOR_CYAN " [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
+		std::cout << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << outputLabel;
+		std::cout << COLOR_CYAN " [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
 		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
 
 		if constexpr (benchmarkTests::EnqueueOnly || benchmarkTests::DequeueOnly)
@@ -160,7 +164,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			if ((enqueueThreads == 1 || dequeueThreads == 1) && canDoEnqueueAndDequeueOnly)
 #endif
 			{
-				std::cerr << "enq..." << std::flush;
+				std::cout << "enq..." << std::flush;
 				// Time the enqueues only.
 				std::vector<std::thread> threads;
 
@@ -224,7 +228,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			if (enqueueThreads == 1 && canDoEnqueueAndDequeueOnly)
 #endif
 			{
-				std::cerr << "deq..." << std::flush;
+				std::cout << "deq..." << std::flush;
 				// Time the dequeues only.
 				std::vector<std::thread> threads;
 				threads.reserve(dequeueThreads);
@@ -269,15 +273,15 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				times[1][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
 				verify(outputLabel, 12, enqueueThreads, dequeueThreads, adjustedNumElements);
-				std::cerr << "\33[2K\r";
-				std::cerr << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tseparate  " << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
+				std::cout << "\33[2K\r";
+				std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tseparate  " << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 			}
 		}
 
 		if constexpr (benchmarkTests::Concurrent)
 		{
-			std::cerr << "enq+deq..." << std::flush;
+			std::cout << "enq+deq..." << std::flush;
 			// Time both happening concurrently.
 			QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> dualWrapper;
 			std::vector<std::thread> threads;
@@ -362,8 +366,8 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			times[2][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
 			verify(outputLabel, 3, enqueueThreads, dequeueThreads, adjustedNumElements);
-			std::cerr << "\33[2K\r";
-			std::cerr << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tconcurrent" << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t"  COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
+			std::cout << "\33[2K\r";
+			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tconcurrent" << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t"  COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 		}
 
@@ -371,7 +375,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && RUNMODE != MODE_VERIFY)
 			{
-				std::cerr << "deq_empty..." << std::flush;
+				std::cout << "deq_empty..." << std::flush;
 				// Time dequeues from an empty queue
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> emptyWrapper;
 				std::vector<std::thread> threads;
@@ -422,7 +426,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 		{
 			if (enqueueThreads == 1 && dequeueThreads == 1)
 			{
-				std::cerr << "latency..." << std::flush;
+				std::cout << "latency..." << std::flush;
 				// Time latency
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper1;
 				QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> wrapper2;
@@ -487,7 +491,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 		}
 #if RUNMODE != MODE_VERIFY
-		std::cerr << "\33[2K\r";
+		std::cout << "\33[2K\r";
 #endif
 	}
 
@@ -496,10 +500,10 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (dequeueThreads == 1)
 		{
-			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenqueue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenqueue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				OpsPerSecond(median(times[0]), adjustedNumElements) << "\t" <<
 				OpsPerSecond(Q3(times[0]), adjustedNumElements) << "\t" <<
-				OpsPerSecond(Q1(times[0]), adjustedNumElements) << std::endl;
+				OpsPerSecond(Q1(times[0]), adjustedNumElements) << std::endl);
 		}
 	}
 
@@ -507,19 +511,19 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (enqueueThreads == 1)
 		{
-			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdequeue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdequeue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				OpsPerSecond(median(times[1]), adjustedNumElements) << "\t" <<
 				OpsPerSecond(Q3(times[1]), adjustedNumElements) << "\t" <<
-				OpsPerSecond(Q1(times[1]), adjustedNumElements) << std::endl;
+				OpsPerSecond(Q1(times[1]), adjustedNumElements) << std::endl);
 		}
 	}
 
 	if constexpr (benchmarkTests::Concurrent)
 	{
-		std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenq+deq  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+		RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenq+deq  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 			OpsPerSecond(median(times[2]), adjustedNumElements) << "\t" <<
 			OpsPerSecond(Q3(times[2]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(Q1(times[2]), adjustedNumElements) << std::endl;
+			OpsPerSecond(Q1(times[2]), adjustedNumElements) << std::endl);
 	}
 
 
@@ -527,10 +531,10 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (enqueueThreads == 1)
 		{
-			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdeq_empty\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdeq_empty\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				OpsPerSecond(median(times[3]), adjustedNumElements * 10) << "\t" <<
 				OpsPerSecond(Q3(times[3]), adjustedNumElements * 10) << "\t" <<
-				OpsPerSecond(Q1(times[3]), adjustedNumElements * 10) << std::endl;
+				OpsPerSecond(Q1(times[3]), adjustedNumElements * 10) << std::endl);
 		}
 	}
 
@@ -538,10 +542,10 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (enqueueThreads == 1 && dequeueThreads == 1)
 		{
-			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tlatency  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
+			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tlatency  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
 				std::setw(15) << Latency(median(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
 				std::setw(15) << Latency(Q1(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
-				std::setw(15) << Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::setw(0) << std::endl;
+				std::setw(15) << Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::setw(0) << std::endl);
 		}
 	}
 
@@ -784,17 +788,21 @@ void RunTestsOnElementType()
 #endif
 }
 
-int main()
+int main(int argc, char* argv[])
 {
-	std::cout << std::fixed << std::setprecision(3);
+	if (argc > 1)
+	{
+		file = std::ofstream(argv[1]);
+	}
+	RECORD(std::fixed << std::setprecision(3));
 
 #ifdef VERIFY
-	std::cout << std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(10) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tRESULT" << std::endl;
-	std::cout << "---------------------------------------------------------------------------------------------------------------------------------" << std::endl;
+	RECORD(std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(10) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tRESULT" << std::endl);
+	RECORD("---------------------------------------------------------------------------------------------------------------------------------" << std::endl);
 	RunTestsOnElementType<int>();
 #else
-	std::cout << std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(9) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tMEDIAN\t\tQ1\t\tQ3" << std::endl;
-	std::cout << "----------------------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl;
+	RECORD(std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(9) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tMEDIAN\t\tQ1\t\tQ3" << std::endl);
+	RECORD("----------------------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl);
 
 	if constexpr (benchmarkTypes::Char)
 	{
