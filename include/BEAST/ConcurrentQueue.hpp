@@ -433,22 +433,9 @@ struct BEAST::ReadReservationTicket
 	detail::Buffer<t_ElementType, t_BlockSize>* buffer{ nullptr };
 	typename detail::Buffer<t_ElementType, t_BlockSize>::BufferElement* ptr{ nullptr };
 	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
-	int count{ 0 };
 
 	ReadReservationTicket()
 	{}
-
-	~ReadReservationTicket()
-	{
-		/*if(ptr)
-		{
-			BEAST_ABORT_MSG_F("Destroying a ticket while it still has a reservation!");
-		}*/
-		if(buffer && count != 0)
-		{
-			queue->consume_(buffer, count);
-		}
-	}
 
 	ReadReservationTicket(ReadReservationTicket const& other) = delete;
 	ReadReservationTicket& operator=(ReadReservationTicket const& other) = delete;
@@ -457,7 +444,6 @@ struct BEAST::ReadReservationTicket
 		: buffer(other.buffer)
 		, ptr(other.ptr)
 		, queue(other.queue)
-		, count(other.count)
 	{
 		other.buffer = nullptr;
 		other.ptr = nullptr;
@@ -467,7 +453,6 @@ struct BEAST::ReadReservationTicket
 		buffer = other.buffer;
 		ptr = other.ptr;
 		queue = other.queue;
-		count = other.count;
 		other.buffer = nullptr;
 		other.ptr = nullptr;
 		return *this;
@@ -800,17 +785,6 @@ protected:
 			buffer = nextBuffer;
 			element = buffer->GetForRead();
 		}
-		// This bit allows us to be very efficient about reference counting
-		// by keeping the count on a non-shared variable and only performing operations on
-		// the shared variable in batches. Only when a consumer thread stops reading from a buffer
-		// do we adjust that buffer's reference count, meaning each buffer only has to have a DecRef()
-		// performed once per consumer thread, plus 2 additional times for m_readBuffer and m_writeBuffer changing.
-		// This is a fairly significant performance boost.
-		if(ticket.count != 0)
-		{
-			consumeUnlocked_(ticket.buffer, ticket.count);
-		}
-		ticket.count = 0;
 		// We then set the ticket's buffer to the new buffer we've obtained.
 		ticket.buffer = buffer;
 		return true;
@@ -1134,14 +1108,13 @@ public:
 			// Otherwise we'd just keep ending up reading the same cached element over and over.
 			ticket.ptr = nullptr;
 
-			// Increase the ticket's read count, which is used in the block above to perform bulk DecRefs
-			++ticket.count;
-
 			// Finally, we'll go ahead and pull the data from the element, destroy it, and decrement and possibly free the buffer.
 			// Then we can return true - success!
 			val = std::move(element->item);
 			element->item.~t_ElementType();
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->ready.exchange(false) == true);
+
+			consume_(buffer, 1);
 
 			return true;
 		}
