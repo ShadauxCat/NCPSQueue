@@ -164,8 +164,9 @@ public:
 		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
 
 		totalRemaining += nElements;
-		while (totalRemaining.load() > 0)
+		while (totalRemaining.load(std::memory_order_acquire) > 0)
 		{
+			int count = 0;
 			m_queue->DequeueBatch(batch, t_BatchSize);
 			while (batch.More())
 			{
@@ -173,11 +174,12 @@ public:
 				while (!batch.Next(data))
 				{
 				}
+				++count;
 #ifdef VERIFY
 				localValues[data] += 1;
 #endif
-				--totalRemaining;
 			}
+			totalRemaining.fetch_sub(count, std::memory_order_release);
 		}
 #ifdef VERIFY
 		{
@@ -196,6 +198,84 @@ public:
 		for (size_t i = 0; i < nElements; ++i)
 		{
 			m_queue->DequeueBatch(batch, t_BatchSize);
+		}
+	}
+private:
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>* m_queue;
+};
+
+template<typename t_ElementType, size_t t_NumElements>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>, TicketType::BATCH, 1>
+{
+public:
+	QueueWrapper()
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>(0, 0))
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset, int tid)
+	{
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		ssize_t numWritten = 0;
+		while (numWritten < nElements)
+		{
+			m_queue->EnqueueBatch(batch, 1);
+			while (batch.More())
+			{
+				t_ElementType data = t_ElementType(offset + numWritten);
+				while (!batch.WriteNext(data))
+				{
+
+				}
+				++numWritten;
+			}
+		}
+	}
+
+	void dequeue(size_t nElements, int tid)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		int totalRemaining = nElements;
+		while (totalRemaining > 0)
+		{
+			m_queue->DequeueBatch(batch, 1);
+			while (batch.More())
+			{
+				t_ElementType data;
+				while (!batch.Next(data))
+				{
+				}
+				--totalRemaining;
+#ifdef VERIFY
+				localValues[data] += 1;
+#endif
+			}
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements, int tid)
+	{
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->DequeueBatch(batch, 1);
 		}
 	}
 private:
