@@ -277,7 +277,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				times[1][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
 				verify(outputLabel, 12, enqueueThreads, dequeueThreads, adjustedNumElements);
+#ifdef _WIN32
+				std::cout << "\r                                                                                                    \r";
+#else
 				std::cout << "\33[2K\r";
+#endif
 				std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tseparate  " << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t" COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 			}
@@ -370,7 +374,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			times[2][iter] = timer.exchange(-1) - start;
 #ifdef VERIFY
 			verify(outputLabel, 3, enqueueThreads, dequeueThreads, adjustedNumElements);
+#ifdef _WIN32
+			std::cout << "\r                                                                                                    \r";
+#else
 			std::cout << "\33[2K\r";
+#endif
 			std::cout << std::setw(80) << std::left << outputLabel << std::setw(0) << "\tconcurrent" << std::setw(0) << "\t" << enqueueThreads << "\t" << dequeueThreads << "\t"  COLOR_GREEN << "VALID!" << COLOR_RESET << std::endl;
 #endif
 		}
@@ -495,7 +503,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 			}
 		}
 #if RUNMODE != MODE_VERIFY
+#ifdef _WIN32
+		std::cout << "\r                                                                                                    \r";
+#else
 		std::cout << "\33[2K\r";
+#endif
 #endif
 	}
 
@@ -581,6 +593,9 @@ void RunTestsOnElementType()
 {
 #ifdef HAS_DEQUE
 	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>>();
+	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, std::deque<t_ElementType>, TicketType::BATCH, 1000>();
 #endif
 
 #ifdef HAS_1024CORES

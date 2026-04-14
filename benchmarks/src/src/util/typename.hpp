@@ -12,8 +12,16 @@ public:
 	{
 #ifdef _WIN32
 		std::string ret = __FUNCTION__;
-		ret = ret.substr(ret.find('<') + 7);
-		ret = ret.substr(0, ret.find("GetName") - 4);
+		ret = ret.substr(ret.find('<')+1);
+		if (ret.find("class") != std::string::npos)
+		{
+			ret = ret.substr(6, ret.length() - 6);
+			ret = ret.substr(0, ret.find("GetName") - 4);
+		}
+		else
+		{
+			ret = ret.substr(0, ret.find("GetName") - 3);
+		}
 #else
 		std::string ret = __PRETTY_FUNCTION__;
 		ret = ret.substr(ret.find("t_Type = ") + 9);

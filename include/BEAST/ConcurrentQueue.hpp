@@ -1102,6 +1102,14 @@ public:
 			element->item.~t_ElementType();
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->ready.exchange(false) == true);
 
+			// Surprisingly, even though the ability exists to store a local count on the ticket
+			// and consume it as a single operation only when switching buffers, in practice, in
+			// this particular case, doing the consume every time actually improves performance
+			// because it allows contention to be shared between two variables rather than focused
+			// entirely on just one.
+			// Strangely, the same doesn't hold true for batch dequeues (where accumulating locally
+			// and waiting till the end yields much better performance) or for the calls to change m_outstanding
+			// on the single-item API when batch mode is enabled.
 			consume_(buffer, 1);
 
 			return true;
