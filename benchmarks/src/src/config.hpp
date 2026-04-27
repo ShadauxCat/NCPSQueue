@@ -1,21 +1,40 @@
 #pragma once
+#ifdef _WIN32
+#	define NOMINMAX
+#endif
 
 #define MODE_BENCHMARK 0
 #define MODE_VERIFY 1
 
 #define RUNMODE MODE_BENCHMARK
 
+#include "util/FixedStaticString.hpp"
+
+
 namespace benchmarkConfig
 {
-	constexpr size_t numElements = 1000000;
+	template<typename t_ElementType>
+	class numElements
+	{
+	public:
+		static constexpr size_t value = 25000000;
+	};
+
+	// More than this and the bounded queue creates a compile error for the static array being too large.
+	template<>
+	class numElements<FixedStaticString<64>>
+	{
+	public:
+		static constexpr size_t value = 10000000;
+	};
 
 #if RUNMODE == MODE_VERIFY
-	constexpr int nIters = 1;
+	static constexpr int nIters = 1;
 #else
-	constexpr int nIters = 25;
+	static constexpr int nIters = 25;
 #endif
 
-	constexpr bool pinThreads = true;
+	static constexpr bool pinThreads = true;
 }
 
 // Can't use constexpr here because hardware_concurrency() isn't constexpr
@@ -41,19 +60,21 @@ namespace benchmarkTests
 	constexpr bool LatencyPingPong = true;
 }
 
-// Commenting out any of the below #include directives will disable the tests on it.
+//#define BEAST_ONLY
 
+#ifndef BEAST_ONLY
+// Commenting out any of the below #include directives will disable the tests on it.
 // std::deque + std::mutex
 #include "wrappers/deque.hpp"
-// 10204Cores
+// 1024Cores
 #include "wrappers/1024Cores.hpp"
-// Boost
-#include "wrappers/Boost.hpp"
 // TBB
 #include "wrappers/TBB.hpp"
+// moodycamel
+#include "wrappers/moodycamel.hpp"
 
 // The following queues don't work correctly on ARM.
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !defined(__aarch64__) && !defined(_M_ARM64) && 0
 // Queues from ConcurrencyFreaks
 
 #include "wrappers/ConcurrencyFreaks/BitNext.hpp"
@@ -74,7 +95,7 @@ namespace benchmarkTests
 #include "wrappers/ConcurrencyFreaks/MichaelScott.hpp"
 
 // Queues from Xenium
-// Crashes
+// Crashes even on x86
 //#include "wrappers/xenium/ChaseWorkStealingQueue.hpp"
 #include "wrappers/xenium/Kirsch.hpp"
 #endif
@@ -82,7 +103,9 @@ namespace benchmarkTests
 #include "wrappers/xenium/MichaelScott.hpp"
 #include "wrappers/xenium/Nikolaev.hpp"
 #include "wrappers/xenium/RamalheteQueue.hpp"
-#include "wrappers/xenium/VyukovBoundedQueue.hpp"
+// Excluded because the 1024Cores queue above is the original canonical version of this algorithm.
+//#include "wrappers/xenium/VyukovBoundedQueue.hpp"
+#endif
 
 // BEAST
 #include "wrappers/BEAST_Unbounded.hpp"

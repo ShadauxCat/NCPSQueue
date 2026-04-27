@@ -12,7 +12,7 @@ class QueueWrapper<xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::r
 {
 public:
 	QueueWrapper()
-		: m_queue(BEAST::detail::nextPowerOf2(benchmarkConfig::numElements))
+		: m_queue(BEAST::detail::nextPowerOf2(benchmarkConfig::numElements<t_ElementType>::value))
 	{
 	}
 

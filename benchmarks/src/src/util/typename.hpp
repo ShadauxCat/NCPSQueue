@@ -61,6 +61,16 @@ public:
 			ret += " [Batch (" + num.str() + ")]";
 			break;
 		}
+		case TicketType::WAIT:
+			ret += " [Blocking]";
+			break;
+		case TicketType::BATCHWAIT:
+		{
+			std::stringstream num;
+			num << batchCount;
+			ret += " [Blocking Batch (" + num.str() + ")]";
+			break;
+		}
 		default:
 			break;
 		}

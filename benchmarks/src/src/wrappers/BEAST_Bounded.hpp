@@ -5,12 +5,12 @@
 
 #define HAS_BEAST_BOUNDED
 
-template<typename t_ElementType, TicketType t_TicketType, size_t t_NumElements, bool t_EnableBatch>
-class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>, t_TicketType>
+template<typename t_ElementType, TicketType t_TicketType, size_t t_NumElements, bool t_EnableBatch, bool t_EnableIdleSleep>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>, t_TicketType>
 {
 public:
 	QueueWrapper()
-		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>())
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>())
 	{}
 
 	~QueueWrapper()
@@ -25,7 +25,7 @@ public:
 		for (size_t i = 0; i < nElements; ++i)
 		{
 			t_ElementType data = t_ElementType(offset + i);
-			while (!m_queue->Enqueue(data, ticket)) {};
+			while (!m_queue->TryPush(data, ticket)) {};
 		}
 	}
 	void dequeue(size_t nElements, int tid)
@@ -38,7 +38,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			while (!m_queue->Dequeue(data, ticket)) {};
+			while (!m_queue->TryPop(data, ticket)) {};
 #ifdef VERIFY
 			localValues[data] += 1;
 #endif
@@ -60,19 +60,19 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			m_queue->Dequeue(data, ticket);
+			m_queue->TryPop(data, ticket);
 		}
 	}
 private:
-	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch>* m_queue;
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>* m_queue;
 };
 
-template<typename t_ElementType, size_t t_NumElements>
-class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>, TicketType::NONE>
+template<typename t_ElementType, size_t t_NumElements, bool t_EnableBatch, bool t_EnableIdleSleep>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
-		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>(std::thread::hardware_concurrency(), std::thread::hardware_concurrency()))
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>(std::thread::hardware_concurrency(), std::thread::hardware_concurrency()))
 	{}
 
 	~QueueWrapper()
@@ -85,7 +85,7 @@ public:
 		for (size_t i = 0; i < nElements; ++i)
 		{
 			t_ElementType data = t_ElementType(offset + i);
-			while (!m_queue->Enqueue(data)) {};
+			while (!m_queue->TryPush(data)) {};
 		}
 	}
 	void dequeue(size_t nElements, int tid)
@@ -96,7 +96,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			while (!m_queue->Dequeue(data)) {};
+			while (!m_queue->TryPop(data)) {};
 #ifdef VERIFY
 			localValues[data] += 1;
 #endif
@@ -116,19 +116,19 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			m_queue->Dequeue(data);
+			m_queue->TryPop(data);
 		}
 	}
 private:
-	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements>* m_queue;
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>* m_queue;
 };
 
-template<typename t_ElementType, size_t t_NumElements, size_t t_BatchSize>
-class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>, TicketType::BATCH, t_BatchSize>
+template<typename t_ElementType, size_t t_NumElements, bool t_EnableBatch, bool t_EnableIdleSleep>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>, TicketType::WAIT>
 {
 public:
 	QueueWrapper()
-		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>(0, 0))
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>(std::thread::hardware_concurrency(), std::thread::hardware_concurrency()))
 	{}
 
 	~QueueWrapper()
@@ -138,15 +138,73 @@ public:
 
 	void enqueue(size_t nElements, size_t offset, int tid)
 	{
-		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchEnqueueList batch = m_queue->CreateEnqueueList();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			t_ElementType data = t_ElementType(offset + i);
+			m_queue->PushWait(data);
+		}
+	}
+	void dequeue(size_t nElements, int tid)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->PopWait(data);
+#ifdef VERIFY
+			localValues[data] += 1;
+#endif
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements, int tid)
+	{
+		BEAST::BoundedReadReservationTicket<t_ElementType> ticket;
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->TryPop(data, ticket);
+		}
+	}
+private:
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>* m_queue;
+};
+
+template<typename t_ElementType, size_t t_NumElements, size_t t_BatchSize, bool t_EnableBatch, bool t_EnableIdleSleep>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>, TicketType::BATCH, t_BatchSize>
+{
+public:
+	QueueWrapper()
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>(0, 0))
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset, int tid)
+	{
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>::BatchPushList batch = m_queue->CreatePushList();
 		ssize_t numWritten = 0;
 		while (numWritten < nElements)
 		{
-			m_queue->EnqueueBatch(batch, std::min(ssize_t(t_BatchSize), (ssize_t)nElements - numWritten));
+			m_queue->PushBatch(batch, std::min(ssize_t(t_BatchSize), (ssize_t)nElements - numWritten));
 			while (batch.More())
 			{
 				t_ElementType data = t_ElementType(offset + numWritten);
-				while (!batch.WriteNext(data))
+				while (!batch.TryWriteNext(data))
 				{
 
 				}
@@ -160,16 +218,16 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue->CreatePopList();
 
 		size_t totalRemaining = nElements;
 		while (totalRemaining > 0)
 		{
-			m_queue->DequeueBatch(batch, std::min(t_BatchSize, totalRemaining));
+			m_queue->PopBatch(batch, std::min(t_BatchSize, totalRemaining));
 			while (batch.More())
 			{
 				t_ElementType data;
-				while (!batch.Next(data))
+				while (!batch.TryReadNext(data))
 				{
 				}
 				--totalRemaining;
@@ -190,13 +248,87 @@ public:
 	}
 	void dequeueEmpty(size_t nElements, int tid)
 	{
-		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>::BatchDequeueList batch = m_queue->CreateDequeueList();
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue->CreatePopList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			m_queue->DequeueBatch(batch, t_BatchSize);
+			m_queue->PopBatch(batch, t_BatchSize);
 		}
 	}
 private:
-	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, true>* m_queue;
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>* m_queue;
+};
+
+
+template<typename t_ElementType, size_t t_NumElements, size_t t_BatchSize, bool t_EnableBatch, bool t_EnableIdleSleep>
+class QueueWrapper<BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>, TicketType::BATCHWAIT, t_BatchSize>
+{
+public:
+	QueueWrapper()
+		: m_queue(new BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>(0, 0))
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset, int tid)
+	{
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>::BatchPushList batch = m_queue->CreatePushList();
+		ssize_t numWritten = 0;
+		while (numWritten < nElements)
+		{
+			m_queue->PushBatch(batch, std::min(ssize_t(t_BatchSize), (ssize_t)nElements - numWritten));
+			while (batch.More())
+			{
+				t_ElementType data = t_ElementType(offset + numWritten);
+				batch.WriteNextWait(data);
+				++numWritten;
+			}
+		}
+	}
+
+	void dequeue(size_t nElements, int tid)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue->CreatePopList();
+
+		size_t totalRemaining = nElements;
+		while (totalRemaining > 0)
+		{
+			m_queue->PopBatch(batch, std::min(t_BatchSize, totalRemaining));
+			while (batch.More())
+			{
+				t_ElementType data;
+				batch.ReadNextWait(data);
+				--totalRemaining;
+#ifdef VERIFY
+				localValues[data] += 1;
+#endif
+			}
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements, int tid)
+	{
+		typename BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue->CreatePopList();
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->PopBatch(batch, t_BatchSize);
+		}
+	}
+private:
+	BEAST::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>* m_queue;
 };

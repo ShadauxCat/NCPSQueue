@@ -36,19 +36,33 @@
 
 #include <type_traits>
 #include <stdexcept>
+#include <semaphore>
 
 #if defined(_WIN32)
 #    include <BaseTsd.h>
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
-#    define BEAST_LIKELY(x) (x)
-#    define BEAST_UNLIKELY(x) (x)
 #    define BEAST_FORCE_NO_INLINE __declspec(noinline)
+#    define BEAST_FORCE_INLINE __forceinline
 #elif defined(__INTEL_COMPILER_BUILD_DATE) || defined(__clang__) || defined(__GNUC__)
-#    define BEAST_LIKELY(x) (__builtin_expect(!!(x), 1))
-#    define BEAST_UNLIKELY(x) (__builtin_expect(!!(x), 0))
 #    define BEAST_FORCE_NO_INLINE __attribute__((noinline))
+#    define BEAST_FORCE_INLINE __attribute__((always_inline)) inline
+#endif
+
+#ifndef BEAST_CACHELINE_SIZE
+#    define BEAST_CACHELINE_SIZE 128
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+BEAST_FORCE_INLINE void BEAST_YIELD()
+{
+	__dmb(_ARM_BARRIER_ISHST);
+	__yield();
+}
+#else
+#	define BEAST_YIELD _mm_pause
+
 #endif
 
 #define BEAST_CONCAT_2(left, right) left##right
@@ -59,10 +73,6 @@
     fputs("\n", stderr);                 \
     fflush(stderr);                      \
     std::terminate();
-
-#ifndef BEAST_CACHELINE_SIZE
-#    define BEAST_CACHELINE_SIZE 128
-#endif
 
 #ifndef BEAST_CONCURRENT_QUEUE_DEBUG_ASSERTS
 #    define BEAST_CONCURRENT_QUEUE_DEBUG_ASSERTS 0
@@ -91,6 +101,9 @@
 #define BEAST_DEBUG(...)
 #endif
 
+#ifndef BEAST_DEFAULT_SPIN_COUNT
+#	define BEAST_DEFAULT_SPIN_COUNT 1000
+#endif
 
 namespace BEAST
 {
@@ -99,7 +112,7 @@ namespace BEAST
 #endif
 	namespace detail
 	{
-		template <typename t_ElementType, size_t t_BlockSize>
+		template <typename t_ElementType, size_t t_BlockSize, bool t_EnableIdleSleep>
 		class Buffer;
 
 		template <typename t_ElementType, template<typename> typename t_AllocatorType>
@@ -162,7 +175,7 @@ namespace BEAST
 		static_assert(nextPowerOf2(uint32_t(32000)) == 32768, "nextPowerOf2 failed");
 	}  // namespace detail
 
-	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, template<typename> typename t_AllocatorType = std::allocator>
+	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, bool t_EnableIdleSleep = false, template<typename> typename t_AllocatorType = std::allocator>
 	struct ReadReservationTicket;
 
 	template <typename t_ElementType>
@@ -171,11 +184,33 @@ namespace BEAST
 	template <typename t_ElementType>
 	struct BoundedWriteReservationTicket;
 
-	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, template<typename> typename t_AllocatorType = std::allocator>
+	
+	
+	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, bool t_EnableIdleSleep = false, template<typename> typename t_AllocatorType = std::allocator>
 	class ConcurrentQueue;
 
-	template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch = false, template<typename> typename t_AllocatorType = std::allocator>
+	template<typename t_ElementType, size_t t_BlockSize = 8192, template<typename> typename t_AllocatorType = std::allocator>
+	using BatchableConcurrentQueue = ConcurrentQueue<t_ElementType, t_BlockSize, true, false, t_AllocatorType>;
+
+	template<typename t_ElementType, size_t t_BlockSize = 8192, template<typename> typename t_AllocatorType = std::allocator>
+	using IdleSleepingConcurrentQueue = ConcurrentQueue<t_ElementType, t_BlockSize, false, true, t_AllocatorType>;
+
+	template<typename t_ElementType, size_t t_BlockSize = 8192, template<typename> typename t_AllocatorType = std::allocator>
+	using BatchableIdleSleepingConcurrentQueue = ConcurrentQueue<t_ElementType, t_BlockSize, true, true, t_AllocatorType>;
+
+
+
+	template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch = false, bool t_EnableIdleSleep = false, template<typename> typename t_AllocatorType = std::allocator>
 	class ConcurrentBoundedQueue;
+
+	template <typename t_ElementType, size_t t_QueueSize, template<typename> typename t_AllocatorType = std::allocator>
+	using BatchableConcurrentBoundedQueue = ConcurrentBoundedQueue<t_ElementType, t_QueueSize, true, false, t_AllocatorType>;
+
+	template <typename t_ElementType, size_t t_QueueSize, template<typename> typename t_AllocatorType = std::allocator>
+	using IdleSleepingConcurrentBoundedQueue = ConcurrentBoundedQueue<t_ElementType, t_QueueSize, false, true, t_AllocatorType>;
+
+	template <typename t_ElementType, size_t t_QueueSize, template<typename> typename t_AllocatorType = std::allocator>
+	using BatchableIdleSleepingConcurrentBoundedQueue = ConcurrentBoundedQueue<t_ElementType, t_QueueSize, true, true, t_AllocatorType>;
 }  // namespace BEAST
 
 /**
@@ -187,15 +222,34 @@ namespace BEAST
  *          the majority of the atomic operations, as the read and write position are both
  *          contained within this class.
  */
-template <typename t_ElementType, size_t t_BlockSize>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableIdleSleep>
 class alignas(BEAST_CACHELINE_SIZE) BEAST::detail::Buffer
 {
 public:
-	struct BufferElement
+	template<bool WithNotifier>
+	struct BufferElementImpl
 	{
-		std::atomic<bool> ready;
+		typedef std::binary_semaphore* NotifierType;
+
+		static constexpr std::binary_semaphore* READY_SENTINEL = reinterpret_cast<std::binary_semaphore*>(0x1);
+		static constexpr std::binary_semaphore* FREE_SENTINEL = nullptr;
+
+		std::atomic<std::binary_semaphore*> notifier;
 		t_ElementType item;
 	};
+
+	template<>
+	struct BufferElementImpl<false>
+	{
+		typedef bool NotifierType;
+		static constexpr bool READY_SENTINEL = true;
+		static constexpr bool FREE_SENTINEL = false;
+
+		std::atomic<bool> notifier;
+		t_ElementType item;
+	};
+
+	using BufferElement = BufferElementImpl<t_EnableIdleSleep>;
 
 	Buffer()
 		: m_next(nullptr),
@@ -280,7 +334,7 @@ public:
 	}
 
 	/**
-	 * @brief   Retrieve a pointer to an element for dequeue.
+	 * @brief   Retrieve a pointer to an element for pop.
 	 *
 	 * @details This function is thread-safe and is guaranteed to return an element reserved
 	 *          for only the caller. There's no need to synchronize access to this element.
@@ -308,7 +362,7 @@ public:
 	}
 
 	/**
-	 * @brief   Retrieve a pointer to an element for enqueue.
+	 * @brief   Retrieve a pointer to an element for push.
 	 *
 	 * @details This function is thread-safe and is guaranteed to return an element reserved
 	 *          for only the caller. There's no need to synchronize access to this element.
@@ -383,7 +437,7 @@ public:
 	void Cleanup()
 	{
 		BufferElement* element = this->GetForRead();
-		while(element < m_end && element->ready)
+		while(element < m_end && element->notifier == Buffer::BufferElement::READY_SENTINEL)
 		{
 			element->item.~t_ElementType();
 			element = this->GetForRead();
@@ -418,12 +472,12 @@ private:
  *
  * @warning You must call queue.InitializeReservationTicket() on this before using it!
  */
-template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
 struct BEAST::ReadReservationTicket
 {
-	detail::Buffer<t_ElementType, t_BlockSize>* buffer{ nullptr };
-	typename detail::Buffer<t_ElementType, t_BlockSize>::BufferElement* ptr{ nullptr };
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>* queue{ nullptr };
+	detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>* buffer{ nullptr };
+	typename detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>::BufferElement* ptr{ nullptr };
+	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>* queue{ nullptr };
 
 	ReadReservationTicket()
 	{}
@@ -479,7 +533,7 @@ public:
 		}
 	}
 
-	void Enqueue(t_ElementType& element, size_t pos)
+	void Push(t_ElementType& element, size_t pos)
 	{
 		Element* internalElement = GetFree();
 		internalElement->pos = pos;
@@ -488,7 +542,7 @@ public:
 		m_count.fetch_add(1, std::memory_order_release);
 	}
 
-	bool Dequeue(t_ElementType& result)
+	bool TryPop(t_ElementType& result)
 	{
 		if (m_count.load(std::memory_order_acquire) == 0)
 		{
@@ -567,16 +621,16 @@ private:
  *          read queue because the current one is exhausted.
  *
  *          However, while it's not STRICTLY speaking lock-free, PRACTICALLY speaking,
- *          it's wait-free population agnostic for the vast majority of enqueues and dequeues.
- *          So long as the reservation ticket used for dequeues is kept alive, this queue is extremely fast.
+ *          it's wait-free population agnostic for the vast majority of pushes and pops.
+ *          So long as the reservation ticket used for pops is kept alive, this queue is extremely fast.
  *          Be warned, however, that if you don't keep the reservation ticket alive, the queue will still work,
- *          but dequeues will be somewhat slower - while the ticket stays alive, it batches reference counting
+ *          but pops will be somewhat slower - while the ticket stays alive, it batches reference counting
  *          operations, but each time the reservation ticket destructs it has to apply those reference count changes.
- *          Which means if it destructs after every dequeue, there's an atomic fetch_sub that will happen after each
- *          queue. It sounds like it's not a big deal, but removing one fetch_sub operation from each dequeue
+ *          Which means if it destructs after every pop, there's an atomic fetch_sub that will happen after each
+ *          queue. It sounds like it's not a big deal, but removing one fetch_sub operation from each pop
  *          can have a surprisingly large performance impact.
  *
- *          Note, though, that the reservation tickets MUST BE KEPT ALIVE if dequeue returns false, or an element
+ *          Note, though, that the reservation tickets MUST BE KEPT ALIVE if pop returns false, or an element
  *          in the queue will become unreachable and will never be read, and memory for the buffer containing it
  *          will not be able to be reused and will cause a memory leak.
  *
@@ -584,7 +638,7 @@ private:
  *
  * @tparam  t_BlockSize         the number of elements to allocate at a time.
  *                              Generally speaking, most queues will end up seeing double this number in use,
- *                              assuming it's reasonably large and enqueue operations don't outpace dequeue operations.
+ *                              assuming it's reasonably large and push operations don't outpace pop operations.
  *                              Once the first block is used up a new one will be allocated and the first will be reused
  *                              if it's empty, rather than being freed, hence seeing double this number in memory usage after
  *                              the initial t_BlockSize reads have been completed.
@@ -595,17 +649,17 @@ private:
  *
  * @tparam   t_AllocatorType    An allocator class compatible with std::allocator. Does not actually allocate individual elements;
  *                              rather, allocates blocks of type detail::Buffer<t_Element, t_BlockSize>, hence this class
- *                              must support `rebind`. For ticket-free dequeue operations, ReadReservationTickets will also
+ *                              must support `rebind`. For ticket-free pop operations, ReadReservationTickets will also
  *                              be allocated after failed reads, and deallocated on subsequent successful reads.
  */
-template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
 class alignas(BEAST_CACHELINE_SIZE) BEAST::ConcurrentQueue
 {
 public:
-	using ReadReservationTicket = BEAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
-	using Buffer = BEAST::detail::Buffer<t_ElementType, t_BlockSize>;
+	using ReadReservationTicket = BEAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
+	using Buffer = BEAST::detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>;
 
-	friend struct BEAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>;
+	friend struct BEAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
 
 protected:
 	/**
@@ -616,10 +670,12 @@ protected:
 	inline void consume_(Buffer* buffer, ssize_t amount)
 	{
 		ssize_t ret = buffer->DecRef(amount);
-		if(BEAST_UNLIKELY(ret == 0))
+		if(ret == 0) [[unlikely]]
 		{
 			while(m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
-			{}
+			{
+				BEAST_YIELD();
+			}
 			swapToEnd_(buffer);
 			m_reallocatingBuffer.store(false);
 		}
@@ -660,7 +716,7 @@ protected:
 	inline void consumeUnlocked_(Buffer* buffer)
 	{
 		ssize_t ret = buffer->DecRef();
-		if(BEAST_UNLIKELY(ret == 0))
+		if(ret == 0) [[unlikely]]
 		{
 			swapToEnd_(buffer);
 		}
@@ -677,7 +733,7 @@ protected:
 	inline void consumeUnlocked_(Buffer* buffer, ssize_t amount)
 	{
 		ssize_t ret = buffer->DecRef(amount);
-		if(BEAST_UNLIKELY(ret == 0))
+		if(ret == 0) [[unlikely]]
 		{
 			swapToEnd_(buffer);
 		}
@@ -827,7 +883,7 @@ protected:
 		// Strictly speaking, this section violates lock-free because the allocation happens within a spin-lock.
 		// Practically speaking, this spin-lock happens so infrequently in a queue with a proper block size that
 		// it may as well never happen at all.
-		while(BEAST_UNLIKELY(element >= buffer->GetEnd()))
+		while(element >= buffer->GetEnd()) [[unlikely]]
 		{
 			// When we get here, we use a simple atomic boolean as a spin lock.
 			// We perform an exchange() on it - if it returns false, that means we won the lottery
@@ -836,6 +892,10 @@ protected:
 			{
 				fetchNextWriteBuffer_(element, buffer, 1);
 				m_reallocatingBuffer.store(false, std::memory_order_release);
+			}
+			else
+			{
+				BEAST_YIELD();
 			}
 		}
 
@@ -877,7 +937,7 @@ public:
 	 * @brief   Initialize a reservation ticket. Must be called on a ticket before it can be used.
 	 *
 	 * @details This isn't a particularly expensive operation, but needs to be called on a buffer
-	 *          when it's constructed. The main purpose of this is to save Dequeue() from having to
+	 *          when it's constructed. The main purpose of this is to save Pop() from having to
 	 *          add an if-check to detect an uninitialized buffer. Branching is expensive.
 	 *
 	 * @param   ticket   the ticket to initialize
@@ -889,16 +949,23 @@ public:
 	}
 
 	/**
-	 * @brief   Enqueue an item by reference, calling the copy constructor. Will not fail (unless OOM).
+	 * @brief   Push an item by reference, calling the copy constructor. Will not fail (unless OOM).
 	 *
 	 * @param   val   The value to equeue
 	 */
-	inline void Enqueue(t_ElementType const& val)
+	inline void Push(t_ElementType const& val)
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(val);
-		BEAST_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
-		element.ready.store(true, std::memory_order_release);
+		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
+		auto notifier = element.notifier.exchange(Buffer::BufferElement::READY_SENTINEL, std::memory_order_release);
+		if constexpr (t_EnableIdleSleep)
+		{
+			if (notifier != nullptr) [[unlikely]]
+			{
+				notifier->release();
+			}
+		}
 		if constexpr(t_EnableBatch)
 		{
 			m_outstanding.fetch_add(1, std::memory_order_release);
@@ -906,16 +973,23 @@ public:
 	}
 
 	/**
-	 * @brief   Enqueue an item by rvalue, calling the move constructor. Will not fail (unless OOM).
+	 * @brief   Push an item by rvalue, calling the move constructor. Will not fail (unless OOM).
 	 *
 	 * @param   val   The value to equeue
 	 */
-	inline void Enqueue(t_ElementType&& val)
+	inline void PushMove(t_ElementType&& val)
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(std::move(val));
-		BEAST_CONCURRENT_QUEUE_ASSERT(element.ready.load() == false);
-		element.ready.store(true, std::memory_order_release);
+		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
+		auto notifier = element.notifier.exchange(Buffer::BufferElement::READY_SENTINEL, std::memory_order_release);
+		if constexpr (t_EnableIdleSleep)
+		{
+			if (notifier != nullptr) [[unlikely]]
+			{
+				notifier->release();
+			}
+		}
 		if constexpr(t_EnableBatch)
 		{
 			m_outstanding.fetch_add(1, std::memory_order_release);
@@ -923,18 +997,18 @@ public:
 	}
 
 	/**
-	 * @brief   Enqueue a batch of items. The items will be copy-constructed from the array. Will not fail (unless OOM).
+	 * @brief   Push a batch of items. The items will be copy-constructed from the array. Will not fail (unless OOM).
 	 *
-	 * @details Compared to Enqueue(), when enqueuing multiple items in sequence, EnqueueBatch() reduces the number of
+	 * @details Compared to Push(), when enqueuing multiple items in sequence, PushBatch() reduces the number of
 	 *          contentuous atomic variable operations to only two per batch, thus dramatically increasing performance.
-	 *          However, when only a single item is being enqueued, the non-batched enqueue will perform slightly better
+	 *          However, when only a single item is being enqueued, the non-batched push will perform slightly better
 	 *          (though not better enough to warrant the cost of a branch to detect if the number is 1 when it isn't known
 	 *          at compile time).
 	 *
-	 * @param   vals   A C-style array of objects to enqueue
+	 * @param   vals   A C-style array of objects to push
 	 * @param   count  The number of items in the array. (Note this is not necessarily the memory size of the array, but the number of elements that should actually be read from it.)
 	 */
-	inline void EnqueueBatch(t_ElementType* vals, ssize_t count)
+	inline void PushBatch(t_ElementType* vals, ssize_t count)
 	{
 		if constexpr(!t_EnableBatch)
 		{
@@ -952,7 +1026,7 @@ public:
 				// Strictly speaking, this section violates lock-free because the allocation happens within a spin-lock.
 				// Practically speaking, this spin-lock happens so infrequently in a queue with a proper block size that
 				// it may as well never happen at all.
-				while(BEAST_UNLIKELY(element >= end))
+				while(element >= end) [[unlikely]]
 				{
 					// When we get here, we use a simple atomic boolean as a spin lock.
 					// We perform an exchange() on it - if it returns false, that means we won the lottery
@@ -963,9 +1037,20 @@ public:
 						m_reallocatingBuffer.store(false, std::memory_order_release);
 						end = buffer->GetEnd();
 					}
+					else
+					{
+						BEAST_YIELD();
+					}
 				}
 				new (&element->item) t_ElementType(vals[i]);
-				element->ready.store(true, std::memory_order_release);
+				auto notifier = element->notifier.exchange(Buffer::BufferElement::READY_SENTINEL, std::memory_order_release);
+				if constexpr (t_EnableIdleSleep)
+				{
+					if (notifier != nullptr) [[unlikely]]
+					{
+						notifier->release();
+					}
+				}
 				++element;
 			}
 			m_outstanding.fetch_add(count, std::memory_order_release);
@@ -973,97 +1058,97 @@ public:
 	}
 
 	/**
-	 * @brief   Attempt to dequeue an item. Not guaranteed to succeed, as the queue may be empty.
+	 * @brief   Attempt to pop an item. Not guaranteed to succeed, as the queue may be empty.
 	 *
-	 * @details To improve performance, all dequeue operations will cache data in the ReadReservationTicket parameter.
+	 * @details To improve performance, all pop operations will cache data in the ReadReservationTicket parameter.
 	 *
-	 *          If the dequeue operation returns false, this parameter MUST be held onto and passed back into Dequeue()
+	 *          If the pop operation returns false, this parameter MUST be held onto and passed back into Pop()
 	 *          or an element in the queue will become permanently inaccessible.
 	 *
 	 *          It doesn't matter what thread passes the ticket back in, but it cannot be disposed of so long as
-	 *          Dequeue() has returned false.
+	 *          Pop() has returned false.
 	 *
 	 *          For emphasis: The ticket MUST be passed back to the queue again in order to read all elements from the queue.
-	 *          Ticketed dequeues operate like a backorder system. If you make a dequeue and an item is ready to read, it will
+	 *          Ticketed pops operate like a backorder system. If you make a pop and an item is ready to read, it will
 	 *          be given to you on the spot. If the queue is empty, it populates the passed ReadReservationTicket with a
 	 *          *reservation* for the spot it tried to read. When that spot is later written to, you must return with the same
 	 *          ticket - with the receipt, to continue the backorder metaphor - in order to read it. It will not be given
 	 *          to another customer, no matter what!
 	 *
-	 *          The reason for this is that, to achieve its speed, BEASTQueue dequeues items *optimistically*, assuming something
+	 *          The reason for this is that, to achieve its speed, BEASTQueue pops items *optimistically*, assuming something
 	 *          is ready to read when you attempt to read it. It increments the read head based on this assumption. This
 	 *          allows BEASTQueue to avoid complex compare-and-swap operations and keep its common-case operation to a single
-	 *          atomic increment per enqueue or dequeue. The downside, though, is when it's incorrect on its optimistic dequeue,
+	 *          atomic increment per push or pop. The downside, though, is when it's incorrect on its optimistic pop,
 	 *          it cannot safely correct - it can't simply decrement the read head because a race condition exists where thread
-	 *          A attempts to read index 0, to find it not yet written, then thread B enqueues indexes 0 and 1, and then thread
+	 *          A attempts to read index 0, to find it not yet written, then thread B pushes indexes 0 and 1, and then thread
 	 *          C successfully reads index 1, believing index 0 to already have been read because thread A incremented the read
 	 *          head already. The read head is now at 2, with index 1 consumed and index 0 not consumed. Decrementing the read
-	 *          head would set it back to index 1, thus resulting in index 0 not being read on the next dequeue, and index 1
+	 *          head would set it back to index 1, thus resulting in index 0 not being read on the next pop, and index 1
 	 *          being read twice.
 	 *
 	 *          In order to resolve that problem, the ReadReservationTicket is used to record locally (so as to avoid the need
 	 *          for something like a secondary concurrent queue to store failed read indices in) that index 0 was claimed but
-	 *          not yet read. In order to actually READ index 0, that ticket must be passed back into Dequeue() again.
+	 *          not yet read. In order to actually READ index 0, that ticket must be passed back into Pop() again.
 	 *
 	 *          It is vitally important, however, to stress that ReadReservationTicket *is not thread-safe* and *must only
-	 *          be accessed by one thread at a time.* This DOES limit the use cases for ticketed dequeues to those where either
+	 *          be accessed by one thread at a time.* This DOES limit the use cases for ticketed pops to those where either
 	 *          only one consumer is active, or each consumer is assigned its own ticket, possibly in stack memory or thread-local
 	 *          storage.
 	 *
 	 *          It's also worth emphasizing that the ticket is a permanent reservation for a specific index in the queue and cannot
-	 *          be returned to the queue, so doing something like emptying out the ticket by looping until Dequeue() returns false
-	 *          will result in one item in the queue being permanently associated with the ticket used, so if other Dequeue() forms
+	 *          be returned to the queue, so doing something like emptying out the ticket by looping until Pop() returns false
+	 *          will result in one item in the queue being permanently associated with the ticket used, so if other Pop() forms
 	 *          are used to read from the queue later, or if a different ticket is used later, one item will have been rendered
 	 *          unavailable.
 	 *
 	 *          If these limitations do not suit your use case (and, in many circumstances, they won't), then consider using
-	 *          the ticket-free Dequeue() or BatchDequeue(). In fact, BatchDequeue() is often preferable to ticketed dequeues,
-	 *          as well - if you're reading more than one or two elements at a time, you'll likely find BatchDequeue() to perform
-	 *          faster than Dequeue() and have fewer limitations. (Please see the benchmarks for a better understanding of where
-	 *          BatchDequeue with small batch sizes exceeds or falls behind ticketed dequeues.)
+	 *          the ticket-free Pop() or BatchPop(). In fact, BatchPop() is often preferable to ticketed pops,
+	 *          as well - if you're reading more than one or two elements at a time, you'll likely find BatchPop() to perform
+	 *          faster than Pop() and have fewer limitations. (Please see the benchmarks for a better understanding of where
+	 *          BatchPop with small batch sizes exceeds or falls behind ticketed pops.)
 	 *
-	 *          An additional word of warning: Ticket-Free dequeues do, in fact, use a secondary queue under the hood to
+	 *          An additional word of warning: Ticket-Free pops do, in fact, use a secondary queue under the hood to
 	 *          store tickets that are shared between threads. This secondary queue is fast in most use cases, because
-	 *          it only stores tickets when a dequeue fails and dequeue-from-empty in the secondary queue is the optimal
-	 *          path. However, because dequeues when it's not empty are much slower, the overall amortized performance of
-	 *          ticket-free dequeues will be somewhat worse than ticketed dequeues.
+	 *          it only stores tickets when a pop fails and pop-from-empty in the secondary queue is the optimal
+	 *          path. However, because pops when it's not empty are much slower, the overall amortized performance of
+	 *          ticket-free pops will be somewhat worse than ticketed pops.
 	 *
-	 *          Additionally, and vitally: The Ticket-Free Dequeue API is ticket-free in name only and does use tickets
-	 *          under the hood. However, BatchDequeue() is actually ENTIRELY ticket-free and DOES NOT use tickets. Which means
-	 *          that the Ticket-Free and BatchDequeue APIs *do not mix very well* unless you are *very careful* about your
-	 *          usage - any time the ticket-free Dequeue() returns false, an element in the queue has been made inaccessible
-	 *          for batch dequeueing and may then only be retrieved via another ticket-free dequeue. The same is true for
-	 *          mixing ticket-free and ticketed dequeues - any time either returns false, an element has been made inaccessible
+	 *          Additionally, and vitally: The Ticket-Free Pop API is ticket-free in name only and does use tickets
+	 *          under the hood. However, BatchPop() is actually ENTIRELY ticket-free and DOES NOT use tickets. Which means
+	 *          that the Ticket-Free and BatchPop APIs *do not mix very well* unless you are *very careful* about your
+	 *          usage - any time the ticket-free Pop() returns false, an element in the queue has been made inaccessible
+	 *          for batch dequeueing and may then only be retrieved via another ticket-free pop. The same is true for
+	 *          mixing ticket-free and ticketed pops - any time either returns false, an element has been made inaccessible
 	 *          to the other.
 	 *
-	 *          If Dequeue() returns true, it is still highly recommended to keep the ticket alive and pass it back in.
+	 *          If Pop() returns true, it is still highly recommended to keep the ticket alive and pass it back in.
 	 *          The only reason for this is performance - the performance drop from having to adjust reference counts
-	 *          on each dequeue operation isn't crippling, but it is noticeable.
+	 *          on each pop operation isn't crippling, but it is noticeable.
 	 *
 	 *
 	 * @param   val      A reference to a value, which will be filled with the contents of the dequeued element, if any.
 	 *                   The move assignment operator will be called on the value, if one exists.
 	 * @param   ticket   A reservation ticket which will hold cached data to improve performance.
 	 *
-	 * @return  true if the dequeue succeeded and tha value holds a valid item, false if the dequeue failed.
+	 * @return  true if the pop succeeded and tha value holds a valid item, false if the pop failed.
 	 */
-	inline bool Dequeue(t_ElementType& val, ReadReservationTicket& ticket)
+	inline bool TryPop(t_ElementType& val, ReadReservationTicket& ticket)
 	{
 		// For reads, we'll start out by checking our reservation ticket. If it's got cached data, we can skip a lot of work we already did.
 		typename Buffer::BufferElement* element = ticket.ptr;
 		Buffer* buffer = ticket.buffer;
 
-		// There are a few cases we can run into in the dequeue operation.
-		// The easiest case is after a failed dequeue, in which case we already have our element and can check it again.
-		if(BEAST_LIKELY(!element))
+		// There are a few cases we can run into in the pop operation.
+		// The easiest case is after a failed pop, in which case we already have our element and can check it again.
+		if(!element) [[likely]]
 		{
-			// The second case is when the ticket passed in has been held over from a previous successful dequeue.
+			// The second case is when the ticket passed in has been held over from a previous successful pop.
 			// In this case we don't have to worry about acquiring the read buffer, because it's cached. We only have
 			// to do that if the current one is exhausted.
 
 			// Step one, get the next element and determine if the current buffer is exhausted!
 			element = buffer->GetForRead();
-			while(BEAST_UNLIKELY(element >= buffer->GetEnd()))
+			while(element >= buffer->GetEnd()) [[unlikely]]
 			{
 				// If the buffer is exhausted, we have to acquire the next one.
 				// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
@@ -1078,6 +1163,10 @@ public:
 					}
 					m_reallocatingBuffer.store(false, std::memory_order_release);
 				}
+				else
+				{
+					BEAST_YIELD();
+				}
 			}
 		}
 
@@ -1089,8 +1178,8 @@ public:
 		// Now that we have an element to read, we have to check if there's any actual data in it.
 		// If not, we're going to remember this element in the reservation ticket and come back to it later.
 		// This definitively prevents any race conditions involved in attempting to correct for overcommit.
-		bool ready = element->ready.load(std::memory_order_acquire);
-		if(BEAST_LIKELY(ready == true))
+		auto notifier = element->notifier.load(std::memory_order_acquire);
+		if(notifier == Buffer::BufferElement::READY_SENTINEL) [[likely]]
 		{
 			// If the element did have valid data, we need to make sure our ticket's not holding any cache information.
 			// Otherwise we'd just keep ending up reading the same cached element over and over.
@@ -1100,14 +1189,14 @@ public:
 			// Then we can return true - success!
 			val = std::move(element->item);
 			element->item.~t_ElementType();
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->ready.exchange(false) == true);
+			BEAST_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == Buffer::BufferElement::READY_SENTINEL);
 
 			// Surprisingly, even though the ability exists to store a local count on the ticket
 			// and consume it as a single operation only when switching buffers, in practice, in
 			// this particular case, doing the consume every time actually improves performance
 			// because it allows contention to be shared between two variables rather than focused
 			// entirely on just one.
-			// Strangely, the same doesn't hold true for batch dequeues (where accumulating locally
+			// Strangely, the same doesn't hold true for batch pops (where accumulating locally
 			// and waiting till the end yields much better performance) or for the calls to change m_outstanding
 			// on the single-item API when batch mode is enabled.
 			consume_(buffer, 1);
@@ -1118,40 +1207,77 @@ public:
 		return false;
 	}
 
+	void PopWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	{
+		ReadReservationTicket ticket;
+		InitializeReservationTicket(ticket);
+		while (ticket.ptr == nullptr)
+		{
+			if (TryPop(val, ticket))
+			{
+				return;
+			}
+		}
+		size_t spins = 0;
+		while (ticket.ptr->notifier.load(std::memory_order_acquire) == Buffer::BufferElement::FREE_SENTINEL) [[unlikely]]
+		{
+			BEAST_YIELD();
+			if constexpr (t_EnableIdleSleep)
+			{
+				if (++spins > maxSpinsBeforeSemaphoreWait)
+				{
+					std::binary_semaphore semaphore(0);
+					std::binary_semaphore* previous = ticket.ptr->notifier.exchange(&semaphore, std::memory_order_acq_rel);
+					if (previous != Buffer::BufferElement::READY_SENTINEL)
+					{
+						semaphore.acquire();
+					}
+					break;
+				}
+			}
+		}
+		val = std::move(ticket.ptr->item);
+		ticket.ptr->item.~t_ElementType();
+		BEAST_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange(Buffer::BufferElement::FREE_SENTINEL) == Buffer::BufferElement::READY_SENTINEL);
+
+		consume_(ticket.buffer, 1);
+		return;
+	}
+
 	/**
-	 * @brief   Attempt to dequeue an item without passing in any tickets.
+	 * @brief   Attempt to pop an item without passing in any tickets.
 	 *
-	 * @details This version of Dequeue() does not require user-provided tickets to complete the dequeue operation,
+	 * @details This version of Pop() does not require user-provided tickets to complete the pop operation,
 	 *          making it more suitable for certain use cases that can't meet the riged requirements of the ticketed
-	 *          API. Do note, however, that while dequeue-from-empty is quite fast with the ticketed API, the ticket-free
-	 *          API suffers greatly with the ticket-free API. Dequeue-from-empty, in general, gets roughly 1/3 the throughput
-	 *          of non-empty dequeues.
+	 *          API. Do note, however, that while pop-from-empty is quite fast with the ticketed API, the ticket-free
+	 *          API suffers greatly with the ticket-free API. Pop-from-empty, in general, gets roughly 1/3 the throughput
+	 *          of non-empty pops.
 	 *
-	 *          HOWEVER, there is a word of warning: Ticket-Free dequeues do, in fact, use a secondary queue under the hood to
+	 *          HOWEVER, there is a word of warning: Ticket-Free pops do, in fact, use a secondary queue under the hood to
 	 *          store tickets that are shared between threads. This secondary queue is fast in most use cases, because
-	 *          it only stores tickets when a dequeue fails and dequeue-from-empty in the secondary queue is the optimal
-	 *          path. However, because dequeues when it's not empty are much slower, the overall amortized performance of
-	 *          ticket-free dequeues will be somewhat worse than ticketed dequeues.
+	 *          it only stores tickets when a pop fails and pop-from-empty in the secondary queue is the optimal
+	 *          path. However, because pops when it's not empty are much slower, the overall amortized performance of
+	 *          ticket-free pops will be somewhat worse than ticketed pops.
 	 *
-	 *          Additionally, and vitally: The Ticket-Free Dequeue API is ticket-free in name only and does use tickets
-	 *          under the hood. However, BatchDequeue() is actually ENTIRELY ticket-free and DOES NOT use tickets. Which means
-	 *          that the Ticket-Free and BatchDequeue APIs *do not mix very well* unless you are *very careful* about your
-	 *          usage - any time the ticket-free Dequeue() returns false, an element in the queue has been made inaccessible
-	 *          for batch dequeueing and may then only be retrieved via another ticket-free dequeue. The same is true for
-	 *          mixing ticket-free and ticketed dequeues - any time either returns false, an element has been made inaccessible
+	 *          Additionally, and vitally: The Ticket-Free Pop API is ticket-free in name only and does use tickets
+	 *          under the hood. However, BatchPop() is actually ENTIRELY ticket-free and DOES NOT use tickets. Which means
+	 *          that the Ticket-Free and BatchPop APIs *do not mix very well* unless you are *very careful* about your
+	 *          usage - any time the ticket-free Pop() returns false, an element in the queue has been made inaccessible
+	 *          for batch dequeueing and may then only be retrieved via another ticket-free pop. The same is true for
+	 *          mixing ticket-free and ticketed pops - any time either returns false, an element has been made inaccessible
 	 *          to the other.
 	 *
-	 *          See the documentation for Dequeue(t_ElementType& val, ReadReservationTicket& ticket) for more information.
+	 *          See the documentation for Pop(t_ElementType& val, ReadReservationTicket& ticket) for more information.
 	 *
 	 * @param   val      A reference to a value, which will be filled with the contents of the dequeued element, if any.
 	 *                   The move assignment operator will be called on the value, if one exists.
 	 *
-	 * @return  true if the dequeue succeeded and tha value holds a valid item, false if the dequeue failed.
+	 * @return  true if the pop succeeded and tha value holds a valid item, false if the pop failed.
 	 */
-	inline bool Dequeue(t_ElementType& val)
+	inline bool TryPop(t_ElementType& val)
 	{
 		ReadReservationTicket ticket;
-		bool reattempt = m_subQueue.Dequeue(ticket);
+		bool reattempt = m_subQueue.TryPop(ticket);
 		if (!reattempt)
 		{
 			if (m_failedReads.load(std::memory_order_acquire) != 0)
@@ -1160,7 +1286,7 @@ public:
 			}
 			InitializeReservationTicket(ticket);
 		}
-		if (Dequeue(val, ticket))
+		if (TryPop(val, ticket))
 		{
 			if (reattempt)
 			{
@@ -1172,30 +1298,30 @@ public:
 		{
 			m_failedReads.fetch_add(1, std::memory_order_acq_rel);
 		}
-		m_subQueue.Enqueue(ticket, (ticket.ptr - ticket.buffer->GetStart()) + ticket.buffer->GetGeneration() * t_BlockSize);
+		m_subQueue.Push(ticket, (ticket.ptr - ticket.buffer->GetStart()) + ticket.buffer->GetGeneration() * t_BlockSize);
 		return false;
 	}
 
 	/**
-	 * @brief Stores state and provides logic for iterating through the results of a BatchDequeue.
+	 * @brief Stores state and provides logic for iterating through the results of a BatchPop.
 	 *
-	 * @details The BatchDequeueList is an iterator-like class that allows for the consumption of elements
-	 *          returned via BatchDequeue(). Because the queue uses multiple buffers under the hood, there is
-	 *          a possibility that the results of the BatchDequeue() will span two more more buffers. In
-	 *          that situation, BatchDequeueList will contain the contiguous elements retrieved from only
+	 * @details The BatchPopList is an iterator-like class that allows for the consumption of elements
+	 *          returned via BatchPop(). Because the queue uses multiple buffers under the hood, there is
+	 *          a possibility that the results of the BatchPop() will span two more more buffers. In
+	 *          that situation, BatchPopList will contain the contiguous elements retrieved from only
 	 *          one buffer at a time. When the end of the buffer is reached, it will lazy-fetch elements from
 	 *          the next buffer until the entire batch has been consumed.
 	 *
-	 *          WARNING: Iterating the BatchDequeueList is important to trigger reference counting logic on
-	 *          the queue buffers to enable them to be recycled. If you dequeue but don't iterate the list,
-	 *          you may cause the queue to experience a memory leak. When BatchDequeueList is destroyed, it
+	 *          WARNING: Iterating the BatchPopList is important to trigger reference counting logic on
+	 *          the queue buffers to enable them to be recycled. If you pop but don't iterate the list,
+	 *          you may cause the queue to experience a memory leak. When BatchPopList is destroyed, it
 	 *          will automatically perform this iteration for you to update the reference counts. The iteration
-	 *          will also be performed automatically if you pass a non-consumed iterator back into BatchDequeue
+	 *          will also be performed automatically if you pass a non-consumed iterator back into BatchPop
 	 *          to retrieve more items. However, if you do neither of those things and an iterator is left sitting
 	 *          somewhere unconsumed, it will prevent the reference counting from occurring and memory will not
 	 *          be restored to the reusable buffer list, resulting in a leak.
 	 */
-	class BatchDequeueList
+	class BatchPopList
 	{
 	public:
 		/**
@@ -1206,11 +1332,11 @@ public:
 		 *          this will iterate until it reaches the end of the current buffer, then lazy fetch elements
 		 *          from successive buffers until the batch is exhausted.
 		 */
-		inline bool Next(t_ElementType& val)
+		inline bool TryReadNext(t_ElementType& val)
 		{
 			if(!m_pendingRead)
 			{
-				while(BEAST_UNLIKELY(m_element >= m_end))
+				while(m_element >= m_end) [[unlikely]]
 				{
 					// If the buffer is exhausted, we have to acquire the next one.
 					// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
@@ -1235,10 +1361,11 @@ public:
 							m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
 							break;
 						}
+						BEAST_YIELD();
 					}
 				}
 			}
-			if(!m_element->ready.load(std::memory_order_acquire))
+			if(m_element->notifier.load(std::memory_order_acquire) != Buffer::BufferElement::READY_SENTINEL) [[unlikely]]
 			{
 				m_pendingRead = true;
 				return false;
@@ -1252,6 +1379,67 @@ public:
 			return true;
 		}
 
+		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+		{
+			if (!m_pendingRead)
+			{
+				while (m_element >= m_end) [[unlikely]]
+				{
+					// If the buffer is exhausted, we have to acquire the next one.
+					// This is done under the same spin-lock as allocating a new buffer for writes, and the logic is almost identical.
+					// The only difference is that, if buffer->GetNext() returns nullptr, instead of allocating a new one,
+					// we just return false; for more details on this logic, see the comments in getNextElement_()
+					Buffer* buffer = m_buffer;
+					for (;;)
+					{
+						if (!m_queue->m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
+						{
+							if (!m_queue->fetchNextReadBuffer_(m_element, m_buffer, m_remaining))
+							{
+								m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
+								continue;
+							}
+							if (m_consumed != 0)
+							{
+								m_queue->consumeUnlocked_(buffer, m_consumed);
+								m_consumed = 0;
+							}
+							m_end = m_buffer->GetEnd();
+							m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
+							break;
+						}
+						BEAST_YIELD();
+					}
+				}
+			}
+
+			size_t spins = 0;
+			while (m_element->notifier.load(std::memory_order_acquire) != Buffer::BufferElement::READY_SENTINEL) [[unlikely]]
+			{
+				BEAST_YIELD();
+				if constexpr (t_EnableIdleSleep)
+				{
+					if (++spins > maxSpinsBeforeSemaphoreWait)
+					{
+						std::binary_semaphore semaphore(0);
+						std::binary_semaphore* previous = m_element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
+						if (previous != Buffer::BufferElement::READY_SENTINEL)
+						{
+							semaphore.acquire();
+						}
+						break;
+					}
+				}
+			}
+
+			++m_consumed;
+			val = t_ElementType(std::move(m_element->item));
+			m_element->item.~t_ElementType();
+			--m_remaining;
+			++m_element;
+			m_pendingRead = false;
+		}
+
 		/**
 		 * @brief Check if there are more items to iterate.
 		 *
@@ -1259,24 +1447,22 @@ public:
 		 */
 		inline bool More() { return (m_remaining > 0); }
 
-		~BatchDequeueList()
+		~BatchPopList()
 		{
-			while(BEAST_UNLIKELY(More()))
+			while(More()) [[unlikely]]
 			{
 
 				t_ElementType data;
-				while(!Next(data))
-				{
-				}
+				ReadNextWait(data);
 			}
 
-			if(BEAST_LIKELY(m_consumed != 0))
+			if(m_consumed != 0) [[likely]]
 			{
 				m_queue->consume_(m_buffer, m_consumed);
 			}
 		}
 
-		BatchDequeueList(BatchDequeueList&& other)
+		BatchPopList(BatchPopList&& other)
 			: m_queue(other.m_queue)
 			, m_element(other.m_element)
 			, m_end(other.m_end)
@@ -1298,17 +1484,17 @@ public:
 
 	protected:
 
-		BatchDequeueList()
+		BatchPopList()
 		{}
 
-		BatchDequeueList(ConcurrentQueue* queue)
+		BatchPopList(ConcurrentQueue* queue)
 			: m_queue(queue)
 		{}
 
-		BatchDequeueList(BatchDequeueList const& other) = delete;
-		BatchDequeueList(BatchDequeueList& other) = delete;
-		BatchDequeueList& operator=(BatchDequeueList const& other) = delete;
-		BatchDequeueList& operator=(BatchDequeueList& other) = delete;
+		BatchPopList(BatchPopList const& other) = delete;
+		BatchPopList(BatchPopList& other) = delete;
+		BatchPopList& operator=(BatchPopList const& other) = delete;
+		BatchPopList& operator=(BatchPopList& other) = delete;
 
 		friend class ConcurrentQueue;
 		ConcurrentQueue* m_queue;
@@ -1321,23 +1507,23 @@ public:
 		bool m_pendingRead{ false };
 	};
 
-	BatchDequeueList CreateDequeueList()
+	BatchPopList CreatePopList()
 	{
-		return BatchDequeueList(this);
+		return BatchPopList(this);
 	}
 
 	/**
-	 * @brief Retrieve multiple items from the queue. When maxCount is more than 1 or 2, DequeueBatch can offer orders of
-	 *        magnitude greater performance than either Dequeue option.
+	 * @brief Retrieve multiple items from the queue. When maxCount is more than 1 or 2, PopBatch can offer orders of
+	 *        magnitude greater performance than either Pop option.
 	 *
-	 * @details In contrast with the other two Dequeue() options, DequeueBatch() takes advantage of the contiguous storage
+	 * @details In contrast with the other two Pop() options, PopBatch() takes advantage of the contiguous storage
 	 *          structure of BEASTQueue to reduce contention by allowing the retrieval of multiple items from the queue with
 	 *          only a single atomic increment. A second atomic operation is used to keep track of how many elements it's allowed
 	 *          to read to ensure it doesn't over-consume the queue. When it does, a third atomic operation is used to correct.
 	 *
 	 *          However, while the additional atomic operations on the queue result in slower performance for individual item
-	 *          dequeues, this is vastly made up for when reading larger numbers of items by reducing the contention on each
-	 *          individual read - while 100 normal dequeue operations would involve a total of 100 atomic increments on contentuous
+	 *          pops, this is vastly made up for when reading larger numbers of items by reducing the contention on each
+	 *          individual read - while 100 normal pop operations would involve a total of 100 atomic increments on contentuous
 	 *          variables (when batching is disabled), a batch read of 100 items involves a total of 2 atomic increments on
 	 *          contentuous variables in the optimistic case, and 3 in the pessimistic case. Additionally, since multiple elements
 	 *          are retrieved in a single function call, the user code can spend more time actually processing the elements it has
@@ -1348,34 +1534,34 @@ public:
 	 *
 	 *          There are, however, drawbacks to the batch API.
 	 *
-	 *          First, simply the act of enabling batch enqueue and dequeue makes the non-batched operations a little bit slower,
+	 *          First, simply the act of enabling batch push and pop makes the non-batched operations a little bit slower,
 	 *          as it adds a requirement for them to update the outstanding count in order for batched operations to function properly
 	 *          when the two are mixed.
 	 *
 	 *          Second, batched operations with a maxCount of 1 are slower than ticketed operations. In general, batch size of 1 will see
-	 *          close to the same performance as the ticket-free API for successful dequeues when batch mode is enabled, and will be slightly
-	 *          slower than ticket-free dequeues with batch mode disabled. However...
+	 *          close to the same performance as the ticket-free API for successful pops when batch mode is enabled, and will be slightly
+	 *          slower than ticket-free pops with batch mode disabled. However...
 	 *
-	 *          Third (to be taken with a LARGE grain of salt), while successful dequeues in batch mode are extremely fast,
-	 *          dequeue-from-empty can be much slower than other options depending on your use case. If you're doing other processing
+	 *          Third (to be taken with a LARGE grain of salt), while successful pops in batch mode are extremely fast,
+	 *          pop-from-empty can be much slower than other options depending on your use case. If you're doing other processing
 	 *          when the queue is empty, or sleeping when the queue is empty, and thus keeping contention low, you'll likely see
-	 *          dequeue-from-empty performing as well as a successful dequeue. But if your threads are all looping on trying to read
+	 *          pop-from-empty performing as well as a successful pop. But if your threads are all looping on trying to read
 	 *          from the empty queue, the number of attempts they can do per second will be dramatically lower due to the increased
 	 *          contention this causes. (However, if you're in that situation, you're not really DOING anything, so practically
 	 *          speaking... does it really matter that you're doing less of nothing?)
 	 *
 	 *          Finally, mixing the normal API and the batch API can lead to unexpected behavior. The non-batch API removes items from
 	 *          the pool that the batch API can read from *even when their reads fail*, so if you perform a non-batch read that returns false,
-	 *          then enqueue an item, then attempt to dequeue that item using the batch API, you will find the batch API returns 0 items
+	 *          then push an item, then attempt to pop that item using the batch API, you will find the batch API returns 0 items
 	 *          instead of the expected 1, because that item was already reserved by the non-batch API before it was written.
-	 *          See the documentation for Dequeue(t_ElementType& val, ReadReservationTicket& ticket) for more information.
+	 *          See the documentation for Pop(t_ElementType& val, ReadReservationTicket& ticket) for more information.
 	 *
 	 * @param   result    Out variable in which to store the retrieved batch data. May safely be reused once all items have been consumed.
 	 *
 	 * @param   maxCount  Maximum number of elements to retrieve. If the full requested amount doesn't exist in the queue, a partial result
 	 *                    will be returned.
 	 */
-	void DequeueBatch(BatchDequeueList& result, ssize_t maxCount)
+	void PopBatch(BatchPopList& result, ssize_t maxCount)
 	{
 		if constexpr(!t_EnableBatch)
 		{
@@ -1383,20 +1569,18 @@ public:
 		}
 		else
 		{
-			while(BEAST_UNLIKELY(result.More()))
+			/*while(result.More()) [[unlikely]]
 			{
 				t_ElementType data;
-				while(!result.Next(data))
-				{
-				}
-			}
+				result.ReadNextWait(data);
+			}*/
 			ssize_t newOutstanding = std::max(m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount, -maxCount);
 			ssize_t batchSize = maxCount;
-			if(BEAST_UNLIKELY(newOutstanding < 0))
+			if(newOutstanding < 0) [[unlikely]]
 			{
 				batchSize += newOutstanding;
 				newOutstanding = m_outstanding.fetch_sub(newOutstanding, std::memory_order_release) - newOutstanding;
-				if(BEAST_LIKELY(batchSize <= 0))
+				if(batchSize <= 0) [[likely]]
 				{
 					return;
 				}
@@ -1514,56 +1698,69 @@ struct BEAST::BoundedWriteReservationTicket
  *
  *          First, and probably most importantly, this queue cannot grow. It works as
  *          a circular buffer, and can only hold the specified number of elements at
- *          one time. Elements that are read by Dequeue() become available to be
+ *          one time. Elements that are read by Pop() become available to be
  *          written again, but if no consumer threads are running, or producer threads
  *          significantly outpace consumer threads, the queue can become full,
- *          causing Enqueue() to return false.
+ *          causing Push() to return false.
  *
  *          Secondly, unlike the unbounded version, this queue is truly lock-free
  *          and wait-free. There are no situations that involve taking a lock.
  *
- *          Thirdly, reservation tickets are required for both enqueue AND dequeue;
+ *          Thirdly, reservation tickets are required for both push AND pop;
  *          however, they only need to be kept alive after a return of false from either
  *          method. If the return value is true, the ticket can be safely thrown away.
  *
- *          Note that there is one situation that can cause an enqueue thread to become
- *          blocked: if a dequeue thread gets a return of false and doesn't call Dequeue()
- *          again with that ticket, an enqueue thread will be blocked waiting for that
- *          spot to be read, even after other enqueue threads successfully move on and continue
+ *          Note that there is one situation that can cause an push thread to become
+ *          blocked: if a pop thread gets a return of false and doesn't call Pop()
+ *          again with that ticket, an push thread will be blocked waiting for that
+ *          spot to be read, even after other push threads successfully move on and continue
  *          writing.
  *
  *          Also note that t_QueueSize will be adjusted up to the nearest power of 2 for performance
  *          reasons.
  *
  *          Finally, note that ConcurrentBoundedQueue does NOT support a batched API.
- *          The reason for this is that the fact that enqueues can fail increases the bookkeeping
+ *          The reason for this is that the fact that pushes can fail increases the bookkeeping
  *          requirements for the batch API beyond the point that can be reasonably, correctly,
  *          and performantly handled in a lock-free concurrent context.
  *
  * @tparam  t_ElementType       the type of element to store in the queue
  *
  * @tparam  t_QueueSize         the maximum number of elements that can be in the queue at a time.
- *                              Once this number has been reached, enqueue() operations will fail until
+ *                              Once this number has been reached, push() operations will fail until
  *                              elements have been dequeued. This is not a maximum number of elements
  *                              ever inserted, only a maximum number that can be held unread at a time -
- *                              representing overhead between enqueue and dequeue operations.
+ *                              representing overhead between push and pop operations.
  *
- * @tparam  t_AllocatorType     Allocator used to allocate tickets for the ticket-free enqueue
- *                              and dequeue operations. The allocators are NOT used in the operations
+ * @tparam  t_AllocatorType     Allocator used to allocate tickets for the ticket-free push
+ *                              and pop operations. The allocators are NOT used in the operations
  *                              that do accept ticket parameters; those are alloc-free.
  */
-template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
+template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
 class alignas(BEAST_CACHELINE_SIZE) BEAST::ConcurrentBoundedQueue
 {
 public:
 	using ReadReservationTicket = BEAST::BoundedReadReservationTicket<t_ElementType>;
 	using WriteReservationTicket = BoundedWriteReservationTicket<t_ElementType>;
 
-	struct BufferElement
+	template<bool t_WithSemaphore>
+	struct BufferElementImpl
+	{
+		static constexpr std::binary_semaphore* READY_SENTINEL = reinterpret_cast<std::binary_semaphore*>(0x1);
+
+		std::atomic<std::binary_semaphore*> notifier{ nullptr };
+		std::atomic<int32_t> generation{ 0 };
+		t_ElementType item;
+	};
+
+	template<>
+	struct BufferElementImpl<false>
 	{
 		std::atomic<int32_t> generation{ 0 };
 		t_ElementType item;
 	};
+
+	using BufferElement = BufferElementImpl<t_EnableIdleSleep>;
 
 	ConcurrentBoundedQueue(ssize_t maxConcurrentTicketFreeReads = 0, ssize_t maxConcurrentTicketFreeWrites = 0) 
 		: m_readIdx(0)
@@ -1591,21 +1788,21 @@ public:
 	}
 
 	/**
-	 * @brief   Enqueue an item by reference, calling the copy constructor. Will fail if the queue is full.
+	 * @brief   Push an item by reference, calling the copy constructor. Will fail if the queue is full.
 	 *
 	 * @param   val      The value to equeue
 	 * @param   ticket   A reservation ticket that will hold cached data in the event of a return of false
 	 *
 	 * @return  true if the element was successfully enqueued, false otherwise
 	 */
-	inline bool Enqueue(t_ElementType const& val, WriteReservationTicket& ticket)
+	inline bool TryPush(t_ElementType const& val, WriteReservationTicket& ticket)
 	{
 		// This case is much simpler than the unbounded case!
 		// First we check to see if the reservation ticket contains an element we're supposed to retry a write to
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
 		int32_t writeGeneration = ticket.generation;
 
-		if(BEAST_LIKELY(!element))
+		if(!element) [[likely]]
 		{
 			// If not, then we get a new one with a simple fetch_add on the write index, wrapping it appropriately.
 			size_t idx = m_writeIdx.fetch_add(1, std::memory_order_acq_rel);
@@ -1617,7 +1814,7 @@ public:
 		// Check the generation flag. If it's not at current generation - 1, we can't overwrite it and have to return false,
 		// storing this element on the reservation ticket to make sure we try it again later.
 		int32_t generation = element->generation.load(std::memory_order_acquire);
-		if(BEAST_LIKELY(generation == -(writeGeneration - 1)))
+		if(generation == -(writeGeneration - 1)) [[likely]]
 		{
 			// If it's not already ready, we make sure the reservation ticket is clear so we don't write it again...
 			ticket.ptr = nullptr;
@@ -1626,12 +1823,20 @@ public:
 			new (&element->item) t_ElementType(val);
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
-			// ...then we signal that the element is ready to read and return true.
-			element->generation.store(writeGeneration, std::memory_order_release);
 			if constexpr (t_EnableBatch)
 			{
 				m_outstanding.fetch_add(1, std::memory_order_release);
 			}
+			if constexpr (t_EnableIdleSleep)
+			{
+				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				if (notifier != nullptr)
+				{
+					notifier->release();
+				}
+			}
+			// ...then we signal that the element is ready to read and return true.
+			element->generation.store(writeGeneration, std::memory_order_release);
 			return true;
 		}
 		ticket.ptr = element;
@@ -1640,20 +1845,20 @@ public:
 	}
 
 	/**
-	 * @brief   Enqueue an item by rvalue reference, calling the move constructor. Will fail if the queue is full.
+	 * @brief   Push an item by rvalue reference, calling the move constructor. Will fail if the queue is full.
 	 *
 	 * @param   val      The value to equeue
 	 * @param   ticket   A reservation ticket that will hold cached data in the event of a return of false
 	 *
 	 * @return  true if the element was successfully enqueued, false otherwise
 	 */
-	inline bool Enqueue(t_ElementType&& val, WriteReservationTicket& ticket)
+	inline bool TryPushMove(t_ElementType& val, WriteReservationTicket& ticket)
 	{
 		// See above for comments; this algorithm is identical except for construction via move.
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
 		int32_t writeGeneration = ticket.generation;
 
-		if (BEAST_LIKELY(!element))
+		if (!element) [[likely]]
 		{
 			size_t idx = m_writeIdx.fetch_add(1, std::memory_order_acq_rel);
 			element = m_buffer + (idx & (c_adjustedSize - 1));
@@ -1662,18 +1867,26 @@ public:
 
 
 		int32_t generation = element->generation.load(std::memory_order_acquire);
-		if (BEAST_LIKELY(generation == -(writeGeneration - 1)))
+		if (generation == -(writeGeneration - 1)) [[likely]]
 		{
 			ticket.ptr = nullptr;
 
 			new (&element->item) t_ElementType(std::move(val));
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
-			element->generation.store(writeGeneration, std::memory_order_release);
 			if constexpr (t_EnableBatch)
 			{
 				m_outstanding.fetch_add(1, std::memory_order_release);
 			}
+			if constexpr (t_EnableIdleSleep)
+			{
+				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				if (notifier != nullptr)
+				{
+					notifier->release();
+				}
+			}
+			element->generation.store(writeGeneration, std::memory_order_release);
 			return true;
 		}
 		ticket.ptr = element;
@@ -1681,8 +1894,86 @@ public:
 		return false;
 	}
 
+	void PushWait(t_ElementType const& val)
+	{
+		WriteReservationTicket ticket;
+		while (ticket.ptr == nullptr)
+		{
+			if (TryPush(val, ticket))
+			{
+				return;
+			}
+		}
+
+		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
+		int32_t writeGeneration = ticket.generation;
+
+		size_t spins = 0;
+		while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
+		{
+			BEAST_YIELD();
+		}
+
+		new (&element->item) t_ElementType(val);
+		BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+
+		if constexpr (t_EnableBatch)
+		{
+			m_outstanding.fetch_add(1, std::memory_order_release);
+		}
+		if constexpr (t_EnableIdleSleep)
+		{
+			auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+			if (notifier != nullptr)
+			{
+				notifier->release();
+			}
+		}
+		// ...then we signal that the element is ready to read and return true.
+		element->generation.store(writeGeneration, std::memory_order_release);
+	}
+
+	void PushMoveWait(t_ElementType& val)
+	{
+		WriteReservationTicket ticket;
+		while (ticket.ptr == nullptr)
+		{
+			if (TryPushMove(val, ticket))
+			{
+				return;
+			}
+		}
+
+		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
+		int32_t writeGeneration = ticket.generation;
+
+		size_t spins = 0;
+		while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
+		{
+			BEAST_YIELD();
+		}
+
+		new (&element->item) t_ElementType(std::move(val));
+		BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+
+		if constexpr (t_EnableBatch)
+		{
+			m_outstanding.fetch_add(1, std::memory_order_release);
+		}
+		if constexpr (t_EnableIdleSleep)
+		{
+			auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+			if (notifier != nullptr)
+			{
+				notifier->release();
+			}
+		}
+		// ...then we signal that the element is ready to read and return true.
+		element->generation.store(writeGeneration, std::memory_order_release);
+	}
+
 	/**
-	 * @brief   Dequeue an item.  Will fail if the queue is empty.
+	 * @brief   Pop an item.  Will fail if the queue is empty.
 	 *
 	 * @param   val      A reference to a value, which will be filled with the contents of the dequeued element, if any.
 	 *                   The move assignment operator will be called on the value, if one exists.
@@ -1690,14 +1981,14 @@ public:
 	 *
 	 * @return  true if the element was successfully enqueued, false otherwise
 	 */
-	inline bool Dequeue(t_ElementType& val, ReadReservationTicket& ticket)
+	inline bool TryPop(t_ElementType& val, ReadReservationTicket& ticket)
 	{
 		// See above for comments; this algorithm is identical except we're operating on m_readIdx
 		// instead of m_writeIdx, and destructing the element instead of constructing it.
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
 		int32_t readGeneration = ticket.generation;
 
-		if(BEAST_LIKELY(!element))
+		if(!element) [[likely]]
 		{
 			size_t idx = m_readIdx.fetch_add(1, std::memory_order_acq_rel);
 			element = m_buffer + (idx & (c_adjustedSize - 1));
@@ -1710,13 +2001,17 @@ public:
 		}
 
 		int32_t generation = element->generation.load(std::memory_order_acquire);
-		if(BEAST_LIKELY(generation == readGeneration))
+		if(generation == readGeneration) [[likely]]
 		{
 			ticket.ptr = nullptr;
 
 			val = std::move(element->item);
 			element->item.~t_ElementType();
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
+			if constexpr (t_EnableIdleSleep)
+			{
+				element->notifier.store(nullptr, std::memory_order_release);
+			}
 			element->generation.store(-readGeneration, std::memory_order_release);
 			return true;
 		}
@@ -1725,28 +2020,71 @@ public:
 		return false;
 	}
 
+	void PopWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	{
+		ReadReservationTicket ticket;
+		while (ticket.ptr == nullptr)
+		{
+			if (TryPop(val, ticket))
+			{
+				return;
+			}
+		}
+
+		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
+		int32_t readGeneration = ticket.generation;
+
+		size_t spins = 0;
+		while (element->generation.load(std::memory_order_acquire) != readGeneration) [[unlikely]]
+		{
+			BEAST_YIELD();
+			if constexpr (t_EnableIdleSleep)
+			{
+				if (++spins > maxSpinsBeforeSemaphoreWait)
+				{
+					std::binary_semaphore semaphore(0);
+					std::binary_semaphore* previous = element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
+					if (previous != BufferElement::READY_SENTINEL)
+					{
+						semaphore.acquire();
+					}
+					break;
+				}
+			}
+		}
+
+		val = std::move(element->item);
+		element->item.~t_ElementType();
+		BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
+		if constexpr (t_EnableIdleSleep)
+		{
+			element->notifier.store(nullptr, std::memory_order_release);
+		}
+		element->generation.store(-readGeneration, std::memory_order_release);
+	}
+
 	/**
-	 * @brief   Attempt to enqueue an item without passing in any tickets.
+	 * @brief   Attempt to push an item without passing in any tickets.
 	 *
-	 * @details This version of Enqueue() does not require persistent tickets even on a return value of false
+	 * @details This version of Push() does not require persistent tickets even on a return value of false
 	 *          (or any tickets, for that matter). The performance of the common case will be similar to the other
-	 *          version of Enqueue(). In the case of failed writes, performance will be somewhat hampered,
+	 *          version of Push(). In the case of failed writes, performance will be somewhat hampered,
 	 *          but still superior to the performance of a successful write.
 	 *
 	 *
 	 * @param   val      The value to equeue
 	 *
-	 * @return  true if the enqueue succeeded, false if the enqueue failed.
+	 * @return  true if the push succeeded, false if the push failed.
 	 */
-	inline bool Enqueue(t_ElementType& val)
+	inline bool TryPush(t_ElementType& val)
 	{
 		WriteReservationTicket ticket;
-		bool reattempt = m_writeSubQueue.Dequeue(ticket);
+		bool reattempt = m_writeSubQueue.TryPop(ticket);
 		if(!reattempt && m_failedWrites.load(std::memory_order_acquire) != 0)
 		{
 			return false;
 		}
-		if(Enqueue(val, ticket))
+		if(TryPush(val, ticket))
 		{
 			if(reattempt)
 			{
@@ -1758,33 +2096,33 @@ public:
 		{
 			m_failedWrites.fetch_add(1, std::memory_order_acq_rel);
 		}
-		m_writeSubQueue.Enqueue(ticket, ((BufferElement*)ticket.ptr) - m_buffer + ticket.generation * t_QueueSize);
+		m_writeSubQueue.Push(ticket, ((BufferElement*)ticket.ptr) - m_buffer + ticket.generation * t_QueueSize);
 		return false;
 	}
 
 	/**
-	 * @brief   Attempt to dequeue an item without passing in any tickets.
+	 * @brief   Attempt to pop an item without passing in any tickets.
 	 *
-	 * @details This version of Dequeue() does not require persistent tickets even on a return value of false
+	 * @details This version of Pop() does not require persistent tickets even on a return value of false
 	 *          (or any tickets, for that matter). The performance of the common case will be similar to the other
-	 *          version of Dequeue(). In the case of failed reads, performance will be somewhat hampered,
+	 *          version of Pop(). In the case of failed reads, performance will be somewhat hampered,
 	 *          but still superior to the performance of a successful read.
 	 *
 	 *
 	 * @param   val      A reference to a value, which will be filled with the contents of the dequeued element, if any.
 	 *                   The move assignment operator will be called on the value, if one exists.
 	 *
-	 * @return  true if the dequeue succeeded and tha value holds a valid item, false if the dequeue failed.
+	 * @return  true if the pop succeeded and tha value holds a valid item, false if the pop failed.
 	 */
-	inline bool Dequeue(t_ElementType& val)
+	inline bool TryPop(t_ElementType& val)
 	{
 		ReadReservationTicket ticket;
-		bool reattempt = m_readSubQueue.Dequeue(ticket);
+		bool reattempt = m_readSubQueue.TryPop(ticket);
 		if(!reattempt && m_failedReads.load(std::memory_order_acquire) != 0)
 		{
 			return false;
 		}
-		if(Dequeue(val, ticket))
+		if(TryPop(val, ticket))
 		{
 			if(reattempt)
 			{
@@ -1796,11 +2134,11 @@ public:
 		{
 			m_failedReads.fetch_add(1, std::memory_order_acq_rel);
 		}
-		m_readSubQueue.Enqueue(ticket, ((BufferElement*)ticket.ptr) - m_buffer + ticket.generation * t_QueueSize);
+		m_readSubQueue.Push(ticket, ((BufferElement*)ticket.ptr) - m_buffer + ticket.generation * t_QueueSize);
 		return false;
 	}
 
-	class BatchDequeueList
+	class BatchPopList
 	{
 	public:
 		/**
@@ -1811,7 +2149,7 @@ public:
 		 *          this will iterate until it reaches the end of the current buffer, then lazy fetch elements
 		 *          from successive buffers until the batch is exhausted.
 		 */
-		inline bool Next(t_ElementType& val)
+		inline bool TryReadNext(t_ElementType& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int32_t readGeneration = (m_idx >> c_generationOp) + 1;
@@ -1823,8 +2161,46 @@ public:
 			element->item.~t_ElementType();
 			--m_remaining;
 			++m_idx;
+			if constexpr (t_EnableIdleSleep)
+			{
+				element->notifier.store(nullptr, std::memory_order_release);
+			}
 			element->generation.store(-readGeneration, std::memory_order_release);
 			return true;
+		}
+
+		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+		{
+			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
+			int32_t readGeneration = (m_idx >> c_generationOp) + 1;
+
+			size_t spins = 0;
+			while (element->generation.load(std::memory_order_acquire) != readGeneration) [[unlikely]]
+			{
+				BEAST_YIELD();
+				if constexpr (t_EnableIdleSleep)
+				{
+					if (++spins > maxSpinsBeforeSemaphoreWait)
+					{
+						std::binary_semaphore semaphore(0);
+						std::binary_semaphore* previous = element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
+						if (previous != BufferElement::READY_SENTINEL)
+						{
+							semaphore.acquire();
+						}
+						break;
+					}
+				}
+			}
+			val = t_ElementType(std::move(element->item));
+			element->item.~t_ElementType();
+			--m_remaining;
+			++m_idx;
+			if constexpr (t_EnableIdleSleep)
+			{
+				element->notifier.store(nullptr, std::memory_order_release);
+			}
+			element->generation.store(-readGeneration, std::memory_order_release);
 		}
 
 		/*
@@ -1834,18 +2210,16 @@ public:
 		 */
 		inline bool More() { return (m_remaining > 0); }
 
-		~BatchDequeueList()
+		~BatchPopList()
 		{
-			while (BEAST_UNLIKELY(More()))
+			while (More()) [[unlikely]]
 			{
 				t_ElementType data;
-				while (!Next(data))
-				{
-				}
+				ReadNextWait(data);
 			}
 		}
 
-		BatchDequeueList(BatchDequeueList&& other)
+		BatchPopList(BatchPopList&& other)
 			: m_idx(other.m_idx)
 			, m_buffer(other.m_buffer)
 			, m_remaining(other.m_remaining)
@@ -1859,17 +2233,17 @@ public:
 
 	protected:
 		friend class ConcurrentBoundedQueue;
-		BatchDequeueList()
+		BatchPopList()
 		{}
 
-		BatchDequeueList(BufferElement* buffer)
+		BatchPopList(BufferElement* buffer)
 			: m_buffer(buffer)
 		{}
 
-		BatchDequeueList(BatchDequeueList const& other) = delete;
-		BatchDequeueList(BatchDequeueList& other) = delete;
-		BatchDequeueList& operator=(BatchDequeueList const& other) = delete;
-		BatchDequeueList& operator=(BatchDequeueList& other) = delete;
+		BatchPopList(BatchPopList const& other) = delete;
+		BatchPopList(BatchPopList& other) = delete;
+		BatchPopList& operator=(BatchPopList const& other) = delete;
+		BatchPopList& operator=(BatchPopList& other) = delete;
 
 		size_t m_idx;
 		BufferElement* m_buffer;
@@ -1877,14 +2251,14 @@ public:
 		ssize_t m_count{ 0 };
 	};
 
-	class BatchEnqueueList
+	class BatchPushList
 	{
 	public:
-		inline bool WriteNext(t_ElementType&& val)
+		inline bool TryWriteNextMove(t_ElementType& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
-			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1))
+			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 			{
 				return false;
 			}
@@ -1899,11 +2273,11 @@ public:
 			return true;
 		}
 
-		inline bool WriteNext(t_ElementType const& val)
+		inline bool TryWriteNext(t_ElementType const& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
-			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1))
+			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 			{
 				return false;
 			}
@@ -1913,9 +2287,76 @@ public:
 
 			element->generation.store(writeGeneration, std::memory_order_release);
 
+			if constexpr (t_EnableIdleSleep)
+			{
+				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				if (notifier != nullptr)
+				{
+					notifier->release();
+				}
+			}
+
 			--m_remaining;
 			++m_idx;
 			return true;
+		}
+
+		inline void WriteNextMoveWait(t_ElementType& val)
+		{
+			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
+			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
+
+			size_t spins = 0;
+			while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
+			{
+				BEAST_YIELD();
+			}
+
+			new (&element->item) t_ElementType(std::move(val));
+			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+
+			element->generation.store(writeGeneration, std::memory_order_release);
+
+			if constexpr (t_EnableIdleSleep)
+			{
+				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				if (notifier != nullptr)
+				{
+					notifier->release();
+				}
+			}
+
+			--m_remaining;
+			++m_idx;
+		}
+
+		inline void WriteNextWait(t_ElementType const& val)
+		{
+			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
+			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
+
+			size_t spins = 0;
+			while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
+			{
+				BEAST_YIELD();
+			}
+
+			new (&element->item) t_ElementType(val);
+			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+
+			element->generation.store(writeGeneration, std::memory_order_release);
+
+			if constexpr (t_EnableIdleSleep)
+			{
+				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				if (notifier != nullptr)
+				{
+					notifier->release();
+				}
+			}
+
+			--m_remaining;
+			++m_idx;
 		}
 
 		/*
@@ -1928,18 +2369,16 @@ public:
 			return (m_remaining > 0);
 		}
 
-		~BatchEnqueueList()
+		~BatchPushList()
 		{
-			while (BEAST_UNLIKELY(More()))
+			while (More()) [[unlikely]]
 			{
 				t_ElementType data;
-				while (!WriteNext(data))
-				{
-				}
+				WriteNextWait(data);
 			}
 		}
 
-		BatchEnqueueList(BatchEnqueueList&& other)
+		BatchPushList(BatchPushList&& other)
 			: m_idx(other.m_idx)
 			, m_buffer(other.m_buffer)
 			, m_remaining(other.m_remaining)
@@ -1953,17 +2392,17 @@ public:
 
 	protected:
 		friend class ConcurrentBoundedQueue;
-		BatchEnqueueList()
+		BatchPushList()
 		{}
 
-		BatchEnqueueList(BufferElement* buffer)
+		BatchPushList(BufferElement* buffer)
 			: m_buffer(buffer)
 		{}
 
-		BatchEnqueueList(BatchEnqueueList const& other) = delete;
-		BatchEnqueueList(BatchEnqueueList& other) = delete;
-		BatchEnqueueList& operator=(BatchEnqueueList const& other) = delete;
-		BatchEnqueueList& operator=(BatchEnqueueList& other) = delete;
+		BatchPushList(BatchPushList const& other) = delete;
+		BatchPushList(BatchPushList& other) = delete;
+		BatchPushList& operator=(BatchPushList const& other) = delete;
+		BatchPushList& operator=(BatchPushList& other) = delete;
 
 		size_t m_idx{ 0 };
 		BufferElement* m_buffer;
@@ -1971,18 +2410,18 @@ public:
 		ssize_t m_count{ 0 };
 	};
 
-	BatchEnqueueList CreateEnqueueList()
+	BatchPushList CreatePushList()
 	{
-		return BatchEnqueueList(m_buffer);
+		return BatchPushList(m_buffer);
 	}
 
-	BatchDequeueList CreateDequeueList()
+	BatchPopList CreatePopList()
 	{
-		return BatchDequeueList(m_buffer);
+		return BatchPopList(m_buffer);
 	}
 
 
-	void EnqueueBatch(BatchEnqueueList& enqueueList, ssize_t count)
+	void PushBatch(BatchPushList& enqueueList, ssize_t count)
 	{
 		if constexpr (!t_EnableBatch)
 		{
@@ -2000,17 +2439,17 @@ public:
 	}
 
 	/**
-	 * @brief Retrieve multiple items from the queue. When maxCount is more than 1 or 2, DequeueBatch can offer orders of
-	 *        magnitude greater performance than either Dequeue option.
+	 * @brief Retrieve multiple items from the queue. When maxCount is more than 1 or 2, PopBatch can offer orders of
+	 *        magnitude greater performance than either Pop option.
 	 *
-	 * @details In contrast with the other two Dequeue() options, DequeueBatch() takes advantage of the contiguous storage
+	 * @details In contrast with the other two Pop() options, PopBatch() takes advantage of the contiguous storage
 	 *          structure of BEASTQueue to reduce contention by allowing the retrieval of multiple items from the queue with
 	 *          only a single atomic increment. A second atomic operation is used to keep track of how many elements it's allowed
 	 *          to read to ensure it doesn't over-consume the queue. When it does, a third atomic operation is used to correct.
 	 *
 	 *          However, while the additional atomic operations on the queue result in slower performance for individual item
-	 *          dequeues, this is vastly made up for when reading larger numbers of items by reducing the contention on each
-	 *          individual read - while 100 normal dequeue operations would involve a total of 100 atomic increments on contentuous
+	 *          pops, this is vastly made up for when reading larger numbers of items by reducing the contention on each
+	 *          individual read - while 100 normal pop operations would involve a total of 100 atomic increments on contentuous
 	 *          variables (when batching is disabled), a batch read of 100 items involves a total of 2 atomic increments on
 	 *          contentuous variables in the optimistic case, and 3 in the pessimistic case. Additionally, since multiple elements
 	 *          are retrieved in a single function call, the user code can spend more time actually processing the elements it has
@@ -2021,34 +2460,34 @@ public:
 	 *
 	 *          There are, however, drawbacks to the batch API.
 	 *
-	 *          First, simply the act of enabling batch enqueue and dequeue makes the non-batched operations a little bit slower,
+	 *          First, simply the act of enabling batch push and pop makes the non-batched operations a little bit slower,
 	 *          as it adds a requirement for them to update the outstanding count in order for batched operations to function properly
 	 *          when the two are mixed.
 	 *
 	 *          Second, batched operations with a maxCount of 1 are slower than ticketed operations. In general, batch size of 1 will see
-	 *          close to the same performance as the ticket-free API for successful dequeues when batch mode is enabled, and will be slightly
-	 *          slower than ticket-free dequeues with batch mode disabled. However...
+	 *          close to the same performance as the ticket-free API for successful pops when batch mode is enabled, and will be slightly
+	 *          slower than ticket-free pops with batch mode disabled. However...
 	 *
-	 *          Third (to be taken with a LARGE grain of salt), while successful dequeues in batch mode are extremely fast,
-	 *          dequeue-from-empty can be much slower than other options depending on your use case. If you're doing other processing
+	 *          Third (to be taken with a LARGE grain of salt), while successful pops in batch mode are extremely fast,
+	 *          pop-from-empty can be much slower than other options depending on your use case. If you're doing other processing
 	 *          when the queue is empty, or sleeping when the queue is empty, and thus keeping contention low, you'll likely see
-	 *          dequeue-from-empty performing as well as a successful dequeue. But if your threads are all looping on trying to read
+	 *          pop-from-empty performing as well as a successful pop. But if your threads are all looping on trying to read
 	 *          from the empty queue, the number of attempts they can do per second will be dramatically lower due to the increased
 	 *          contention this causes. (However, if you're in that situation, you're not really DOING anything, so practically
 	 *          speaking... does it really matter that you're doing less of nothing?)
 	 *
 	 *          Finally, mixing the normal API and the batch API can lead to unexpected behavior. The non-batch API removes items from
 	 *          the pool that the batch API can read from *even when their reads fail*, so if you perform a non-batch read that returns false,
-	 *          then enqueue an item, then attempt to dequeue that item using the batch API, you will find the batch API returns 0 items
+	 *          then push an item, then attempt to pop that item using the batch API, you will find the batch API returns 0 items
 	 *          instead of the expected 1, because that item was already reserved by the non-batch API before it was written.
-	 *          See the documentation for Dequeue(t_ElementType& val, ReadReservationTicket& ticket) for more information.
+	 *          See the documentation for Pop(t_ElementType& val, ReadReservationTicket& ticket) for more information.
 	 *
 	 * @param   result    Out variable in which to store the retrieved batch data. May safely be reused once all items have been consumed.
 	 *
 	 * @param   maxCount  Maximum number of elements to retrieve. If the full requested amount doesn't exist in the queue, a partial result
 	 *                    will be returned.
 	 */
-	void DequeueBatch(BatchDequeueList& result, ssize_t maxCount)
+	void PopBatch(BatchPopList& result, ssize_t maxCount)
 	{
 		if constexpr (!t_EnableBatch)
 		{
@@ -2056,20 +2495,18 @@ public:
 		}
 		else
 		{
-			while (BEAST_UNLIKELY(result.More()))
+			/*while (result.More()) [[unlikely]]
 			{
 				t_ElementType data;
-				while (!result.Next(data))
-				{
-				}
-			}
+				result.ReadNextWait(data);
+			}*/
 			ssize_t newOutstanding = std::max(m_outstanding.fetch_sub(maxCount, std::memory_order_acq_rel) - maxCount, -maxCount);
 			ssize_t batchSize = maxCount;
-			if (BEAST_UNLIKELY(newOutstanding < 0))
+			if (newOutstanding < 0) [[unlikely]]
 			{
 				batchSize += newOutstanding;
 				newOutstanding = m_outstanding.fetch_sub(newOutstanding, std::memory_order_release) - newOutstanding;
-				if (BEAST_LIKELY(batchSize <= 0))
+				if (batchSize <= 0) [[likely]]
 				{
 					return;
 				}

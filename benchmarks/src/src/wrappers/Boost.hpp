@@ -10,7 +10,7 @@ class QueueWrapper<boost::lockfree::queue<t_ElementType>>
 {
 public:
 	QueueWrapper()
-		: m_queue(benchmarkConfig::numElements)
+		: m_queue(benchmarkConfig::numElements<t_ElementType>::value)
 	{
 
 	}
@@ -59,7 +59,7 @@ private:
 };
 
 template <typename t_ElementType>
-using BoostBoundedQueue = boost::lockfree::queue<t_ElementType, boost::lockfree::fixed_sized<true>, boost::lockfree::capacity<benchmarkConfig::numElements>>;
+using BoostBoundedQueue = boost::lockfree::queue<t_ElementType, boost::lockfree::fixed_sized<true>, boost::lockfree::capacity<benchmarkConfig::numElements<t_ElementType>::value>>;
 
 template<typename t_ElementType>
 class QueueWrapper<BoostBoundedQueue<t_ElementType>>

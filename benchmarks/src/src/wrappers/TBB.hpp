@@ -12,7 +12,7 @@ public:
 	QueueWrapper()
 		: m_queue()
 	{
-		m_queue.set_capacity(benchmarkConfig::numElements);
+		m_queue.set_capacity(benchmarkConfig::numElements<t_ElementType>::value);
 	}
 
 	void enqueue(size_t nElements, size_t offset, int tid)

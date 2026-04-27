@@ -85,17 +85,25 @@ struct BEAST_QueueSize
 	static constexpr size_t size = 0;
 };
 
-template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-struct BEAST_QueueSize<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
+struct BEAST_QueueSize<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>>
 {
 	static constexpr size_t size = t_BlockSize;
 };
 
-template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-struct BEAST_QueueSize<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_AllocatorType>>
+template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
+struct BEAST_QueueSize<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>>
 {
 	static constexpr size_t size = t_QueueSize;
 };
+
+#ifdef HAS_MOODYCAMEL
+template <typename t_ElementType, size_t t_Size>
+struct BEAST_QueueSize<MoodyCamelWithSize<t_ElementType, t_Size>>
+{
+	static constexpr size_t size = t_Size;
+};
+#endif
 
 template<typename t_QueueType>
 struct BEAST_BatchEnabled
@@ -103,22 +111,40 @@ struct BEAST_BatchEnabled
 	static constexpr bool enabled = false;
 };
 
-template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-struct BEAST_BatchEnabled<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_AllocatorType>>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
+struct BEAST_BatchEnabled<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>>
 {
 	static constexpr bool enabled = t_EnableBatch;
 };
 
-template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, template<typename> typename t_AllocatorType>
-struct BEAST_BatchEnabled<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_AllocatorType>>
+template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
+struct BEAST_BatchEnabled<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>>
 {
 	static constexpr bool enabled = t_EnableBatch;
+};
+
+template<typename t_QueueType>
+struct BEAST_NotifyEnabled
+{
+	static constexpr bool enabled = false;
+};
+
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
+struct BEAST_NotifyEnabled<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>>
+{
+	static constexpr bool enabled = t_EnableIdleSleep;
+};
+
+template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
+struct BEAST_NotifyEnabled<BEAST::ConcurrentBoundedQueue<t_ElementType, t_QueueSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>>
+{
+	static constexpr bool enabled = t_EnableIdleSleep;
 };
 
 template<typename t_ElementType, typename t_QueueType, TicketType t_TicketType = TicketType::NA, size_t t_BatchSize = 0, PointerQueuePolicy t_PointerQueuePolicy = PointerQueuePolicy::None>
 void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueThreads, bool canDoEnqueueAndDequeueOnly = true)
 {
-	size_t adjustedNumElements = benchmarkConfig::numElements;
+	size_t adjustedNumElements = benchmarkConfig::numElements<t_ElementType>::value;
 	while (adjustedNumElements % enqueueThreads != 0 || adjustedNumElements % dequeueThreads != 0)
 	{
 		--adjustedNumElements;
@@ -148,7 +174,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	}
 	if (BEAST_BatchEnabled<t_QueueType>::enabled)
 	{
-		outputLabelSS << ", +batch";
+		outputLabelSS << ", +b";
+	}
+	if (BEAST_NotifyEnabled<t_QueueType>::enabled)
+	{
+		outputLabelSS << ", +n";
 	}
 	outputLabelSS << ")";
 	std::string outputLabel = outputLabelSS.str();
@@ -157,7 +187,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	for (int iter = 0; iter < benchmarkConfig::nIters; ++iter)
 	{
 		std::cout << "(" << progress[iter % 4] << ") " COLOR_YELLOW "RUNNING " COLOR_MAGENTA << outputLabel;
-		std::cout << COLOR_CYAN " [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter << "]" COLOR_RESET " tests : ";
+		std::cout << COLOR_CYAN " [Producers: " << enqueueThreads << " | Consumers: " << dequeueThreads << "] " COLOR_GREEN "[Iteration " << iter+1 << "/" << benchmarkConfig::nIters << "]" COLOR_RESET " tests : ";
 		QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy> separateEnqueueDequeueWrapper;
 
 		if constexpr (benchmarkTests::EnqueueOnly || benchmarkTests::DequeueOnly)
@@ -385,7 +415,11 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 		if constexpr (benchmarkTests::DequeueFromEmpty)
 		{
-			if (enqueueThreads == 1 && RUNMODE != MODE_VERIFY)
+			if (enqueueThreads == 1 && RUNMODE != MODE_VERIFY
+#ifdef HAS_DEQUE
+				&& (!std::is_same<std::deque<t_ElementType>, t_QueueType>::value || t_BatchSize == 0)
+#endif
+			)
 			{
 				std::cout << "deq_empty..." << std::flush;
 				// Time dequeues from an empty queue
@@ -445,7 +479,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 
 				auto pingThread = std::thread(
 					std::bind(
-						latencyTestPing<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>>,
+						latencyTestPing<t_ElementType, QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>>,
 						&wrapper1,
 						&wrapper2,
 						0,
@@ -454,7 +488,7 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 				);
 				auto pongThread = std::thread(
 					std::bind(
-						latencyTestPong<QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>>,
+						latencyTestPong<t_ElementType, QueueWrapper<t_QueueType, t_TicketType, t_BatchSize, t_PointerQueuePolicy>>,
 						&wrapper1,
 						&wrapper2,
 						1,
@@ -514,43 +548,47 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 #if RUNMODE != MODE_VERIFY
 	if constexpr (benchmarkTests::EnqueueOnly)
 	{
-		if (dequeueThreads == 1)
+		if (dequeueThreads == 1 && canDoEnqueueAndDequeueOnly)
 		{
-			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenqueue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-				OpsPerSecond(median(times[0]), adjustedNumElements) << "\t" <<
-				OpsPerSecond(Q3(times[0]), adjustedNumElements) << "\t" <<
-				OpsPerSecond(Q1(times[0]), adjustedNumElements) << std::endl);
+			RECORD(std::setw(101) << std::left << outputLabel << std::setw(0) << "\tenqueue  \t" << std::right << std::setw(6) << enqueueThreads << "\t" << std::setw(6) << dequeueThreads << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(median(times[0]), adjustedNumElements) << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(Q3(times[0]), adjustedNumElements) << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(Q1(times[0]), adjustedNumElements) << std::endl);
 		}
 	}
 
 	if constexpr (benchmarkTests::DequeueOnly)
 	{
-		if (enqueueThreads == 1)
+		if (enqueueThreads == 1 && canDoEnqueueAndDequeueOnly)
 		{
-			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdequeue  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-				OpsPerSecond(median(times[1]), adjustedNumElements) << "\t" <<
-				OpsPerSecond(Q3(times[1]), adjustedNumElements) << "\t" <<
-				OpsPerSecond(Q1(times[1]), adjustedNumElements) << std::endl);
+			RECORD(std::setw(101) << std::left << outputLabel << std::setw(0) << "\tdequeue  \t" << std::right << std::setw(6) << enqueueThreads << "\t" << std::setw(6) << dequeueThreads << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(median(times[1]), adjustedNumElements) << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(Q3(times[1]), adjustedNumElements) << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(Q1(times[1]), adjustedNumElements) << std::endl);
 		}
 	}
 
 	if constexpr (benchmarkTests::Concurrent)
 	{
-		RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tenq+deq  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-			OpsPerSecond(median(times[2]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(Q3(times[2]), adjustedNumElements) << "\t" <<
-			OpsPerSecond(Q1(times[2]), adjustedNumElements) << std::endl);
+		RECORD(std::setw(101) << std::left << outputLabel << std::setw(0) << "\tenq+deq  \t" << std::right << std::setw(6) << enqueueThreads << "\t" << std::setw(6) << dequeueThreads << "\t" <<
+			std::setw(19) << std::right << OpsPerSecond(median(times[2]), adjustedNumElements) << "\t" <<
+			std::setw(19) << std::right << OpsPerSecond(Q3(times[2]), adjustedNumElements) << "\t" <<
+			std::setw(19) << std::right << OpsPerSecond(Q1(times[2]), adjustedNumElements) << std::endl);
 	}
 
 
 	if constexpr (benchmarkTests::DequeueFromEmpty)
 	{
-		if (enqueueThreads == 1)
+		if (enqueueThreads == 1
+#ifdef HAS_DEQUE
+			&& (!std::is_same<std::deque<t_ElementType>, t_QueueType>::value || t_BatchSize == 0)
+#endif
+		)
 		{
-			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tdeq_empty\t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-				OpsPerSecond(median(times[3]), adjustedNumElements * 10) << "\t" <<
-				OpsPerSecond(Q3(times[3]), adjustedNumElements * 10) << "\t" <<
-				OpsPerSecond(Q1(times[3]), adjustedNumElements * 10) << std::endl);
+			RECORD(std::setw(101) << std::left << outputLabel << std::setw(0) << "\tdeq_empty\t" << std::right << std::setw(6) << enqueueThreads << "\t" << std::setw(6) << dequeueThreads << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(median(times[3]), adjustedNumElements * 10) << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(Q3(times[3]), adjustedNumElements * 10) << "\t" <<
+				std::setw(19) << std::right << OpsPerSecond(Q1(times[3]), adjustedNumElements * 10) << std::endl);
 		}
 	}
 
@@ -558,10 +596,10 @@ void RunTestsOnQueueTypeWithThreadCounts(size_t enqueueThreads, size_t dequeueTh
 	{
 		if (enqueueThreads == 1 && dequeueThreads == 1)
 		{
-			RECORD(std::setw(80) << std::left << outputLabel << std::setw(0) << "\tlatency  \t" << enqueueThreads << "\t" << dequeueThreads << "\t" <<
-				std::setw(15) << Latency(median(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
-				std::setw(15) << Latency(Q1(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << "\t" <<
-				std::setw(15) << Latency(Q3(times[4]), benchmarkConfig::numElements / 10) / batchSize / 2 << std::setw(0) << std::endl);
+			RECORD(std::setw(101) << std::left << outputLabel << std::setw(0) << "\tlatency  \t" << std::right << std::setw(6) << enqueueThreads << "\t" << std::setw(6) << dequeueThreads << "\t" <<
+				std::setw(19) << std::right << Latency(median(times[4]), benchmarkConfig::numElements<t_ElementType>::value / 10) / batchSize / 2 << "\t" <<
+				std::setw(19) << std::right << Latency(Q1(times[4]), benchmarkConfig::numElements<t_ElementType>::value / 10) / batchSize / 2 << "\t" <<
+				std::setw(19) << std::right << Latency(Q3(times[4]), benchmarkConfig::numElements<t_ElementType>::value / 10) / batchSize / 2 << std::setw(0) << std::endl);
 		}
 	}
 
@@ -731,79 +769,246 @@ void RunTestsOnElementType()
 	RunTestsOnQueueType<t_ElementType, xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>, xenium::policy::entries_per_node<8192>>>();
 #endif
 
+#ifdef HAS_MOODYCAMEL
+	RunTestsOnQueueType<t_ElementType, moodycamel::ConcurrentQueue<t_ElementType>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, moodycamel::ConcurrentQueue<t_ElementType>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, moodycamel::ConcurrentQueue<t_ElementType>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, moodycamel::ConcurrentQueue<t_ElementType>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, moodycamel::ConcurrentQueue<t_ElementType>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, moodycamel::ConcurrentQueue<t_ElementType>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 8192>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 8192>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 32768>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 32768>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 131072>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 131072>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value>, TicketType::NONE>();
+#endif
+
 #ifdef HAS_BEAST_UNBOUNDED
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, false>, TicketType::WAIT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, false>, TicketType::WAIT>();
 
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::EPHEMERAL>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, false, true>, TicketType::WAIT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, 8192, true, true>, TicketType::WAIT>();
 
-
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, false>, TicketType::WAIT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::WAIT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, true>, TicketType::WAIT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::EPHEMERAL>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::WAIT>();
 #endif
 
 #ifdef HAS_BEAST_BOUNDED
 	// Ephemeral tickets aren't benchmarked on the bounded queue as there's no initialization that needs to be done on a ticket,
 	// ergo no real advantage of persistent over ephemeral.
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false>, TicketType::NONE>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 10>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 100>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::BATCH, 1000>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false, false>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, false>, TicketType::WAIT>(false);
 
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false>, TicketType::NONE>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 1>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 10>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 100>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::BATCH, 1000>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, false, true>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 8192, true, true>, TicketType::WAIT>(false);
 
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false>, TicketType::NONE>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 1>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 10>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 100>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::BATCH, 1000>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false, false>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, false>, TicketType::WAIT>(false);
+	 
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, false, true>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 32768, true, true>, TicketType::WAIT>(false);
 
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false>, TicketType::NONE>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 1>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 10>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 100>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::BATCH, 1000>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::PERSISTENT>(false);
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false, false>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, false>, TicketType::WAIT>(false);
 
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, false>, TicketType::NONE>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 10>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 100>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::BATCH, 1000>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::PERSISTENT>();
-	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, false, true>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 65536, true, true>, TicketType::WAIT>(false);
+
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false, false>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::WAIT>(false);
+
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, false, true>, TicketType::WAIT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 1>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 10>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 100>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 1000>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::PERSISTENT>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::NONE>(false);
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::WAIT>(false);
+
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, false>, TicketType::WAIT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::BATCHWAIT, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, false>, TicketType::WAIT>();
+
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, false, true>, TicketType::WAIT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCH, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 1>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 10>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 100>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::BATCHWAIT, 1000>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::PERSISTENT>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::NONE>();
+	RunTestsOnQueueType<t_ElementType, BEAST::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::value, true, true>, TicketType::WAIT>();
 #endif
 }
 
@@ -814,14 +1019,15 @@ int main(int argc, char* argv[])
 		file = std::ofstream(argv[1]);
 	}
 	RECORD(std::fixed << std::setprecision(3));
+	std::cout.imbue(std::locale(""));
 
 #ifdef VERIFY
-	RECORD(std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(10) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tRESULT" << std::endl);
-	RECORD("---------------------------------------------------------------------------------------------------------------------------------" << std::endl);
+	RECORD(std::endl << std::endl << std::setw(101) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(10) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tRESULT" << std::endl);
+	RECORD("------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl);
 	RunTestsOnElementType<int>();
 #else
-	RECORD(std::endl << std::endl << std::setw(80) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(9) << "TEST" << std::setw(0) << "\tPRODS\tCONS\tMEDIAN\t\tQ1\t\tQ3" << std::endl);
-	RECORD("----------------------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl);
+	RECORD(std::endl << std::endl << std::setw(101) << std::left << "QUEUE" << std::setw(0) << "\t" << std::setw(9) << "TEST" << std::setw(0) << "\t PRODS\t  CONS\t             MEDIAN\t                 Q1\t                 Q3" << std::endl);
+	RECORD("----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl);
 
 	if constexpr (benchmarkTypes::Char)
 	{

@@ -15,7 +15,9 @@ enum class TicketType
 	NONE,
 	PERSISTENT,
 	EPHEMERAL,
-	BATCH
+	BATCH,
+	WAIT,
+	BATCHWAIT
 };
 
 enum class PointerQueuePolicy

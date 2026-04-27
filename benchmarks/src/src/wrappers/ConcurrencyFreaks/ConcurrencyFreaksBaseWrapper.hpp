@@ -14,8 +14,8 @@ public:
 	{
 		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
 		{
-			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements];
-			for (size_t i = 0; i < benchmarkConfig::numElements; ++i)
+			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements<t_ElementType>::value];
+			for (size_t i = 0; i < benchmarkConfig::numElements<t_ElementType>::value; ++i)
 			{
 				m_ElementsStaticArray[i] = t_ElementType(i);
 			}

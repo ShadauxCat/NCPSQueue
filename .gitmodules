@@ -4,3 +4,6 @@
 [submodule "benchmarks/src/external/xenium"]
 	path = benchmarks/src/external/xenium
 	url = https://github.com/mpoeter/xenium.git
+[submodule "benchmarks/src/external/concurrentqueue"]
+	path = benchmarks/src/external/concurrentqueue
+	url = https://github.com/cameron314/concurrentqueue.git

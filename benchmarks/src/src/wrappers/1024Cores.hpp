@@ -10,7 +10,7 @@ class QueueWrapper<ext_1024cores::mpmc_bounded_queue<t_ElementType>>
 {
 public:
 	QueueWrapper()
-		: m_queue(pow(2, ceil(log(benchmarkConfig::numElements) / log(2))))
+		: m_queue(pow(2, ceil(log(benchmarkConfig::numElements<t_ElementType>::value) / log(2))))
 	{
 
 	}

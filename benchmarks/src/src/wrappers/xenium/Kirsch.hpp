@@ -16,12 +16,12 @@ class QueueWrapper<
 {
 public:
 	QueueWrapper()
-		: m_queue(16, benchmarkConfig::numElements / 16 + 1)
+		: m_queue(16, benchmarkConfig::numElements<t_ElementType>::value / 16 + 1)
 	{
 		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
 		{
-			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements];
-			for (size_t i = 0; i < benchmarkConfig::numElements; ++i)
+			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements<t_ElementType>::value];
+			for (size_t i = 0; i < benchmarkConfig::numElements<t_ElementType>::value; ++i)
 			{
 				m_ElementsStaticArray[i] = t_ElementType(i);
 			}
@@ -106,8 +106,8 @@ public:
 	{
 		if constexpr (t_PointerQueuePolicy == PointerQueuePolicy::Preallocate)
 		{
-			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements];
-			for (size_t i = 0; i < benchmarkConfig::numElements; ++i)
+			m_ElementsStaticArray = new t_ElementType[benchmarkConfig::numElements<t_ElementType>::value];
+			for (size_t i = 0; i < benchmarkConfig::numElements<t_ElementType>::value; ++i)
 			{
 				m_ElementsStaticArray[i] = t_ElementType(i);
 			}
