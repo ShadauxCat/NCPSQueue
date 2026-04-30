@@ -10,6 +10,12 @@
 
 #include "util/FixedStaticString.hpp"
 
+enum TestType
+{
+	Single = 0x1,
+	Batch = 0x2,
+	Both = Single | Batch
+};
 
 namespace benchmarkConfig
 {
@@ -34,7 +40,9 @@ namespace benchmarkConfig
 	static constexpr int nIters = 25;
 #endif
 
-	static constexpr bool pinThreads = true;
+	static constexpr bool pinThreads = false;
+
+	static constexpr TestType testType = TestType::Both;
 }
 
 // Can't use constexpr here because hardware_concurrency() isn't constexpr

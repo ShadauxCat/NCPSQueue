@@ -55,14 +55,18 @@
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+#include <arm_acle.h>
 BEAST_FORCE_INLINE void BEAST_YIELD()
 {
+#ifdef _WIN32
 	__dmb(_ARM_BARRIER_ISHST);
+#else
+	asm volatile("dmb ishst" ::: "memory")
+#endif
 	__yield();
 }
 #else
 #	define BEAST_YIELD _mm_pause
-
 #endif
 
 #define BEAST_CONCAT_2(left, right) left##right
@@ -87,7 +91,7 @@ BEAST_FORCE_INLINE void BEAST_YIELD()
 #    define BEAST_CONCURRENT_QUEUE_ASSERT(val)
 #endif
 
-#if 0
+#if 1
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -231,8 +235,8 @@ public:
 	{
 		typedef std::binary_semaphore* NotifierType;
 
-		static constexpr std::binary_semaphore* READY_SENTINEL = reinterpret_cast<std::binary_semaphore*>(0x1);
-		static constexpr std::binary_semaphore* FREE_SENTINEL = nullptr;
+		static constexpr intptr_t READY_SENTINEL = 1;
+		static constexpr intptr_t FREE_SENTINEL = 0;
 
 		std::atomic<std::binary_semaphore*> notifier;
 		t_ElementType item;
@@ -242,6 +246,7 @@ public:
 	struct BufferElementImpl<false>
 	{
 		typedef bool NotifierType;
+
 		static constexpr bool READY_SENTINEL = true;
 		static constexpr bool FREE_SENTINEL = false;
 
@@ -437,19 +442,19 @@ public:
 	void Cleanup()
 	{
 		BufferElement* element = this->GetForRead();
-		while(element < m_end && element->notifier == Buffer::BufferElement::READY_SENTINEL)
+		while(element < m_end && element->notifier == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 		{
 			element->item.~t_ElementType();
 			element = this->GetForRead();
 		}
 	}
 
-	int32_t GetGeneration()
+	int64_t GetGeneration()
 	{
 		return m_generation;
 	}
 
-	void SetGeneration(int32_t generation)
+	void SetGeneration(int64_t generation)
 	{
 		m_generation = generation;
 	}
@@ -459,7 +464,7 @@ private:
 	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_refCount;
 	alignas(BEAST_CACHELINE_SIZE) std::atomic<BufferElement*> m_readPos;
 	alignas(BEAST_CACHELINE_SIZE) std::atomic<BufferElement*> m_writePos;
-	alignas(BEAST_CACHELINE_SIZE) int32_t m_generation{ 0 };
+	alignas(BEAST_CACHELINE_SIZE) int64_t m_generation{ 0 };
 
 	char m_buffer[t_BlockSize * sizeof(BufferElement)];
 	BufferElement const* const m_end;
@@ -958,7 +963,7 @@ public:
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(val);
 		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
-		auto notifier = element.notifier.exchange(Buffer::BufferElement::READY_SENTINEL, std::memory_order_release);
+		auto notifier = element.notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 		if constexpr (t_EnableIdleSleep)
 		{
 			if (notifier != nullptr) [[unlikely]]
@@ -982,7 +987,7 @@ public:
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(std::move(val));
 		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
-		auto notifier = element.notifier.exchange(Buffer::BufferElement::READY_SENTINEL, std::memory_order_release);
+		auto notifier = element.notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 		if constexpr (t_EnableIdleSleep)
 		{
 			if (notifier != nullptr) [[unlikely]]
@@ -1043,7 +1048,7 @@ public:
 					}
 				}
 				new (&element->item) t_ElementType(vals[i]);
-				auto notifier = element->notifier.exchange(Buffer::BufferElement::READY_SENTINEL, std::memory_order_release);
+				auto notifier = element->notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 				if constexpr (t_EnableIdleSleep)
 				{
 					if (notifier != nullptr) [[unlikely]]
@@ -1179,7 +1184,7 @@ public:
 		// If not, we're going to remember this element in the reservation ticket and come back to it later.
 		// This definitively prevents any race conditions involved in attempting to correct for overcommit.
 		auto notifier = element->notifier.load(std::memory_order_acquire);
-		if(notifier == Buffer::BufferElement::READY_SENTINEL) [[likely]]
+		if(notifier == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[likely]]
 		{
 			// If the element did have valid data, we need to make sure our ticket's not holding any cache information.
 			// Otherwise we'd just keep ending up reading the same cached element over and over.
@@ -1189,7 +1194,7 @@ public:
 			// Then we can return true - success!
 			val = std::move(element->item);
 			element->item.~t_ElementType();
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == Buffer::BufferElement::READY_SENTINEL);
+			BEAST_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 			// Surprisingly, even though the ability exists to store a local count on the ticket
 			// and consume it as a single operation only when switching buffers, in practice, in
@@ -1219,7 +1224,7 @@ public:
 			}
 		}
 		size_t spins = 0;
-		while (ticket.ptr->notifier.load(std::memory_order_acquire) == Buffer::BufferElement::FREE_SENTINEL) [[unlikely]]
+		while (ticket.ptr->notifier.load(std::memory_order_acquire) == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) [[unlikely]]
 		{
 			BEAST_YIELD();
 			if constexpr (t_EnableIdleSleep)
@@ -1228,7 +1233,7 @@ public:
 				{
 					std::binary_semaphore semaphore(0);
 					std::binary_semaphore* previous = ticket.ptr->notifier.exchange(&semaphore, std::memory_order_acq_rel);
-					if (previous != Buffer::BufferElement::READY_SENTINEL)
+					if (previous != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 					{
 						semaphore.acquire();
 					}
@@ -1238,7 +1243,7 @@ public:
 		}
 		val = std::move(ticket.ptr->item);
 		ticket.ptr->item.~t_ElementType();
-		BEAST_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange(Buffer::BufferElement::FREE_SENTINEL) == Buffer::BufferElement::READY_SENTINEL);
+		BEAST_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 		consume_(ticket.buffer, 1);
 		return;
@@ -1365,7 +1370,7 @@ public:
 					}
 				}
 			}
-			if(m_element->notifier.load(std::memory_order_acquire) != Buffer::BufferElement::READY_SENTINEL) [[unlikely]]
+			if(m_element->notifier.load(std::memory_order_acquire) != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
 			{
 				m_pendingRead = true;
 				return false;
@@ -1414,7 +1419,7 @@ public:
 			}
 
 			size_t spins = 0;
-			while (m_element->notifier.load(std::memory_order_acquire) != Buffer::BufferElement::READY_SENTINEL) [[unlikely]]
+			while (m_element->notifier.load(std::memory_order_acquire) != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
 			{
 				BEAST_YIELD();
 				if constexpr (t_EnableIdleSleep)
@@ -1423,7 +1428,7 @@ public:
 					{
 						std::binary_semaphore semaphore(0);
 						std::binary_semaphore* previous = m_element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
-						if (previous != Buffer::BufferElement::READY_SENTINEL)
+						if (previous != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 						{
 							semaphore.acquire();
 						}
@@ -1746,7 +1751,7 @@ public:
 	template<bool t_WithSemaphore>
 	struct BufferElementImpl
 	{
-		static constexpr std::binary_semaphore* READY_SENTINEL = reinterpret_cast<std::binary_semaphore*>(0x1);
+		static constexpr intptr_t READY_SENTINEL = 1;
 
 		std::atomic<std::binary_semaphore*> notifier{ nullptr };
 		std::atomic<int32_t> generation{ 0 };
@@ -1829,10 +1834,10 @@ public:
 			}
 			if constexpr (t_EnableIdleSleep)
 			{
-				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
-				if (notifier != nullptr)
+				auto waiting = element->notifier.exchange(reinterpret_cast<std::binary_semaphore*>(BufferElement::READY_SENTINEL), std::memory_order_release);
+				if (waiting != nullptr)
 				{
-					notifier->release();
+					waiting->release();
 				}
 			}
 			// ...then we signal that the element is ready to read and return true.
@@ -1880,10 +1885,10 @@ public:
 			}
 			if constexpr (t_EnableIdleSleep)
 			{
-				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
-				if (notifier != nullptr)
+				auto waiting = element->notifier.exchange(reinterpret_cast<std::binary_semaphore*>(BufferElement::READY_SENTINEL), std::memory_order_release);
+				if (waiting != nullptr)
 				{
-					notifier->release();
+					waiting->release();
 				}
 			}
 			element->generation.store(writeGeneration, std::memory_order_release);
@@ -1923,10 +1928,10 @@ public:
 		}
 		if constexpr (t_EnableIdleSleep)
 		{
-			auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
-			if (notifier != nullptr)
+			auto waiting = element->notifier.exchange(reinterpret_cast<std::binary_semaphore*>(BufferElement::READY_SENTINEL), std::memory_order_release);
+			if (waiting != nullptr)
 			{
-				notifier->release();
+				waiting->release();
 			}
 		}
 		// ...then we signal that the element is ready to read and return true.
@@ -1962,10 +1967,10 @@ public:
 		}
 		if constexpr (t_EnableIdleSleep)
 		{
-			auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
-			if (notifier != nullptr)
+			auto waiting = element->notifier.exchange(reinterpret_cast<std::binary_semaphore*>(BufferElement::READY_SENTINEL), std::memory_order_release);
+			if (waiting != nullptr)
 			{
-				notifier->release();
+				waiting->release();
 			}
 		}
 		// ...then we signal that the element is ready to read and return true.
@@ -2013,6 +2018,7 @@ public:
 				element->notifier.store(nullptr, std::memory_order_release);
 			}
 			element->generation.store(-readGeneration, std::memory_order_release);
+			//BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
 			return true;
 		}
 		ticket.ptr = element;
@@ -2042,13 +2048,21 @@ public:
 			{
 				if (++spins > maxSpinsBeforeSemaphoreWait)
 				{
+					// Edge case: Should not normally happen in production systems in properly-sized queues, but it CAN happen
+					// if the queue is too small to handle the throughput that's being pushed through it.
+					// If two consumer queues end up trying to read from the same slot at different generations because the consumers
+					// lapped an entire buffer before a producer was able to finish, both consumers would end up writing to this and
+					// only one would get woken up by the write, while the other one's semaphore would be lost.
+					// To deal with that, we prevent multiple threads from idle sleeping on the same slot... if that case hits,
+					// the additional threads will just spin loop until it resolves. This is considered not a severe issue, since
+					// the existence of this case implies that a producer is actively writing to the slot already and therefore the
+					// spin loop is actually the more performant option.
+					std::binary_semaphore* previous = nullptr;
 					std::binary_semaphore semaphore(0);
-					std::binary_semaphore* previous = element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
-					if (previous != BufferElement::READY_SENTINEL)
+					if(element->notifier.compare_exchange_strong(previous, &semaphore, std::memory_order_acq_rel))
 					{
 						semaphore.acquire();
 					}
-					break;
 				}
 			}
 		}
@@ -2061,6 +2075,7 @@ public:
 			element->notifier.store(nullptr, std::memory_order_release);
 		}
 		element->generation.store(-readGeneration, std::memory_order_release);
+		//BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
 	}
 
 	/**
@@ -2182,13 +2197,21 @@ public:
 				{
 					if (++spins > maxSpinsBeforeSemaphoreWait)
 					{
+						// Edge case: Should not normally happen in production systems in properly-sized queues, but it CAN happen
+						// if the queue is too small to handle the throughput that's being pushed through it.
+						// If two consumer queues end up trying to read from the same slot at different generations because the consumers
+						// lapped an entire buffer before a producer was able to finish, both consumers would end up writing to this and
+						// only one would get woken up by the write, while the other one's semaphore would be lost.
+						// To deal with that, we prevent multiple threads from idle sleeping on the same slot... if that case hits,
+						// the additional threads will just spin loop until it resolves. This is considered not a severe issue, since
+						// the existence of this case implies that a producer is actively writing to the slot already and therefore the
+						// spin loop is actually the more performant option.
+						std::binary_semaphore* previous = nullptr;
 						std::binary_semaphore semaphore(0);
-						std::binary_semaphore* previous = element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
-						if (previous != BufferElement::READY_SENTINEL)
+						if (element->notifier.compare_exchange_strong(previous, &semaphore, std::memory_order_acq_rel))
 						{
 							semaphore.acquire();
 						}
-						break;
 					}
 				}
 			}
@@ -2285,16 +2308,16 @@ public:
 			new (&element->item) t_ElementType(val);
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
-			element->generation.store(writeGeneration, std::memory_order_release);
-
 			if constexpr (t_EnableIdleSleep)
 			{
-				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				auto notifier = element->notifier.exchange(reinterpret_cast<std::binary_semaphore*>(BufferElement::READY_SENTINEL), std::memory_order_acq_rel);
 				if (notifier != nullptr)
 				{
 					notifier->release();
 				}
 			}
+
+			element->generation.store(writeGeneration, std::memory_order_release);
 
 			--m_remaining;
 			++m_idx;
@@ -2315,16 +2338,16 @@ public:
 			new (&element->item) t_ElementType(std::move(val));
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
-			element->generation.store(writeGeneration, std::memory_order_release);
-
 			if constexpr (t_EnableIdleSleep)
 			{
-				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				auto notifier = element->notifier.exchange(reinterpret_cast<std::binary_semaphore*>(BufferElement::READY_SENTINEL), std::memory_order_acq_rel);
 				if (notifier != nullptr)
 				{
 					notifier->release();
 				}
 			}
+
+			element->generation.store(writeGeneration, std::memory_order_release);
 
 			--m_remaining;
 			++m_idx;
@@ -2344,16 +2367,16 @@ public:
 			new (&element->item) t_ElementType(val);
 			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
-			element->generation.store(writeGeneration, std::memory_order_release);
-
 			if constexpr (t_EnableIdleSleep)
 			{
-				auto notifier = element->notifier.exchange(BufferElement::READY_SENTINEL, std::memory_order_acq_rel);
+				auto notifier = element->notifier.exchange(reinterpret_cast<std::binary_semaphore*>(BufferElement::READY_SENTINEL), std::memory_order_acq_rel);
 				if (notifier != nullptr)
 				{
 					notifier->release();
 				}
 			}
+
+			element->generation.store(writeGeneration, std::memory_order_release);
 
 			--m_remaining;
 			++m_idx;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <math.h>
 #include <vector>
@@ -166,4 +166,21 @@ double OpsPerSecondIqr(std::vector<int64_t> const& data, size_t numOps)
 	// but we're converting them to ops per second, meaning larger numbers become smaller numbers and these
 	// arrays are actually in reverse order according to the final value they convert to.
 	return OpsPerSecond(median(firsthalf), numOps) - OpsPerSecond(median(secondhalf), numOps);
+}
+
+std::string Bars(int64_t val, int64_t min, int64_t max, bool reverse = false)
+{
+	double pct = double(val - min) / double(max - min);
+	if (reverse)
+	{
+		pct = 1.0 - pct;
+	}
+	pct = round(pct * 209.0);
+	std::stringstream ss;
+
+	for (int i = 0; i < pct; ++i)
+	{
+		ss << "|";
+	}
+	return ss.str();
 }
