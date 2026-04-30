@@ -66,6 +66,7 @@ BEAST_FORCE_INLINE void BEAST_YIELD()
 	__yield();
 }
 #else
+#	include <immintrin.h>
 #	define BEAST_YIELD _mm_pause
 #endif
 
@@ -121,6 +122,12 @@ namespace BEAST
 
 		template <typename t_ElementType, template<typename> typename t_AllocatorType>
 		class ReservationTicketSubQueue;
+
+		template<typename t_ElementType, bool t_WithSemaphore>
+		struct BufferElementImpl;
+
+		template<typename t_ElementType, bool t_WithSemaphore>
+		struct BoundedBufferElementImpl;
 
 		// These functions collectively find the next power of 2 of a number
 		// Which allows modulus using the faster & rather than %.
@@ -190,32 +197,75 @@ namespace BEAST
 
 	
 	
-	template <typename t_ElementType, size_t t_BlockSize = 8192, bool t_EnableBatch = false, bool t_EnableIdleSleep = false, template<typename> typename t_AllocatorType = std::allocator>
+	template <typename t_ElementType, size_t t_BlockSize = 16384, bool t_EnableBatch = false, bool t_EnableIdleSleep = false, template<typename> typename t_AllocatorType = std::allocator>
 	class ConcurrentQueue;
 
-	template<typename t_ElementType, size_t t_BlockSize = 8192, template<typename> typename t_AllocatorType = std::allocator>
+	template<typename t_ElementType, size_t t_BlockSize = 16384, template<typename> typename t_AllocatorType = std::allocator>
 	using BatchableConcurrentQueue = ConcurrentQueue<t_ElementType, t_BlockSize, true, false, t_AllocatorType>;
 
-	template<typename t_ElementType, size_t t_BlockSize = 8192, template<typename> typename t_AllocatorType = std::allocator>
+	template<typename t_ElementType, size_t t_BlockSize = 16384, template<typename> typename t_AllocatorType = std::allocator>
 	using IdleSleepingConcurrentQueue = ConcurrentQueue<t_ElementType, t_BlockSize, false, true, t_AllocatorType>;
 
-	template<typename t_ElementType, size_t t_BlockSize = 8192, template<typename> typename t_AllocatorType = std::allocator>
+	template<typename t_ElementType, size_t t_BlockSize = 16384, template<typename> typename t_AllocatorType = std::allocator>
 	using BatchableIdleSleepingConcurrentQueue = ConcurrentQueue<t_ElementType, t_BlockSize, true, true, t_AllocatorType>;
 
 
 
-	template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch = false, bool t_EnableIdleSleep = false, template<typename> typename t_AllocatorType = std::allocator>
+	template <typename t_ElementType, size_t t_QueueSize = 131072, bool t_EnableBatch = false, bool t_EnableIdleSleep = false, template<typename> typename t_AllocatorType = std::allocator>
 	class ConcurrentBoundedQueue;
 
-	template <typename t_ElementType, size_t t_QueueSize, template<typename> typename t_AllocatorType = std::allocator>
+	template <typename t_ElementType, size_t t_QueueSize = 131072, template<typename> typename t_AllocatorType = std::allocator>
 	using BatchableConcurrentBoundedQueue = ConcurrentBoundedQueue<t_ElementType, t_QueueSize, true, false, t_AllocatorType>;
 
-	template <typename t_ElementType, size_t t_QueueSize, template<typename> typename t_AllocatorType = std::allocator>
+	template <typename t_ElementType, size_t t_QueueSize = 131072, template<typename> typename t_AllocatorType = std::allocator>
 	using IdleSleepingConcurrentBoundedQueue = ConcurrentBoundedQueue<t_ElementType, t_QueueSize, false, true, t_AllocatorType>;
 
-	template <typename t_ElementType, size_t t_QueueSize, template<typename> typename t_AllocatorType = std::allocator>
+	template <typename t_ElementType, size_t t_QueueSize = 131072, template<typename> typename t_AllocatorType = std::allocator>
 	using BatchableIdleSleepingConcurrentBoundedQueue = ConcurrentBoundedQueue<t_ElementType, t_QueueSize, true, true, t_AllocatorType>;
+
 }  // namespace BEAST
+
+
+template<typename t_ElementType, bool t_WithSemaphore>
+struct BEAST::detail::BufferElementImpl
+{
+	typedef std::binary_semaphore* NotifierType;
+
+	static constexpr intptr_t READY_SENTINEL = 1;
+	static constexpr intptr_t FREE_SENTINEL = 0;
+
+	std::atomic<std::binary_semaphore*> notifier;
+	t_ElementType item;
+};
+
+template<typename t_ElementType>
+struct BEAST::detail::BufferElementImpl<t_ElementType, false>
+{
+	typedef bool NotifierType;
+
+	static constexpr bool READY_SENTINEL = true;
+	static constexpr bool FREE_SENTINEL = false;
+
+	std::atomic<bool> notifier;
+	t_ElementType item;
+};
+
+template<typename t_ElementType, bool t_WithSemaphore>
+struct BEAST::detail::BoundedBufferElementImpl
+{
+	static constexpr intptr_t READY_SENTINEL = 1;
+
+	std::atomic<std::binary_semaphore*> notifier{ nullptr };
+	std::atomic<int64_t> generation{ 0 };
+	t_ElementType item;
+};
+
+template<typename t_ElementType>
+struct BEAST::detail::BoundedBufferElementImpl<t_ElementType, false>
+{
+	std::atomic<int64_t> generation{ 0 };
+	t_ElementType item;
+};
 
 /**
  * @class   BEAST::detail::Buffer
@@ -230,31 +280,8 @@ template <typename t_ElementType, size_t t_BlockSize, bool t_EnableIdleSleep>
 class alignas(BEAST_CACHELINE_SIZE) BEAST::detail::Buffer
 {
 public:
-	template<bool WithNotifier>
-	struct BufferElementImpl
-	{
-		typedef std::binary_semaphore* NotifierType;
 
-		static constexpr intptr_t READY_SENTINEL = 1;
-		static constexpr intptr_t FREE_SENTINEL = 0;
-
-		std::atomic<std::binary_semaphore*> notifier;
-		t_ElementType item;
-	};
-
-	template<>
-	struct BufferElementImpl<false>
-	{
-		typedef bool NotifierType;
-
-		static constexpr bool READY_SENTINEL = true;
-		static constexpr bool FREE_SENTINEL = false;
-
-		std::atomic<bool> notifier;
-		t_ElementType item;
-	};
-
-	using BufferElement = BufferElementImpl<t_EnableIdleSleep>;
+	using BufferElement = BEAST::detail::BufferElementImpl<t_ElementType, t_EnableIdleSleep>;
 
 	Buffer()
 		: m_next(nullptr),
@@ -1633,7 +1660,7 @@ template <typename t_ElementType>
 struct BEAST::BoundedReadReservationTicket
 {
 	void* ptr{ nullptr };
-	int32_t generation{ 0 };
+	int64_t generation{ 0 };
 
 	BoundedReadReservationTicket()
 	{}
@@ -1667,7 +1694,7 @@ template <typename t_ElementType>
 struct BEAST::BoundedWriteReservationTicket
 {
 	void* ptr{ nullptr };
-	int32_t generation{ 0 };
+	int64_t generation{ 0 };
 
 	BoundedWriteReservationTicket()
 	{}
@@ -1748,24 +1775,7 @@ public:
 	using ReadReservationTicket = BEAST::BoundedReadReservationTicket<t_ElementType>;
 	using WriteReservationTicket = BoundedWriteReservationTicket<t_ElementType>;
 
-	template<bool t_WithSemaphore>
-	struct BufferElementImpl
-	{
-		static constexpr intptr_t READY_SENTINEL = 1;
-
-		std::atomic<std::binary_semaphore*> notifier{ nullptr };
-		std::atomic<int32_t> generation{ 0 };
-		t_ElementType item;
-	};
-
-	template<>
-	struct BufferElementImpl<false>
-	{
-		std::atomic<int32_t> generation{ 0 };
-		t_ElementType item;
-	};
-
-	using BufferElement = BufferElementImpl<t_EnableIdleSleep>;
+	using BufferElement = BEAST::detail::BoundedBufferElementImpl<t_ElementType, t_EnableIdleSleep>;
 
 	ConcurrentBoundedQueue(ssize_t maxConcurrentTicketFreeReads = 0, ssize_t maxConcurrentTicketFreeWrites = 0) 
 		: m_readIdx(0)
@@ -1805,7 +1815,7 @@ public:
 		// This case is much simpler than the unbounded case!
 		// First we check to see if the reservation ticket contains an element we're supposed to retry a write to
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
-		int32_t writeGeneration = ticket.generation;
+		int64_t writeGeneration = ticket.generation;
 
 		if(!element) [[likely]]
 		{
@@ -1818,7 +1828,7 @@ public:
 
 		// Check the generation flag. If it's not at current generation - 1, we can't overwrite it and have to return false,
 		// storing this element on the reservation ticket to make sure we try it again later.
-		int32_t generation = element->generation.load(std::memory_order_acquire);
+		int64_t generation = element->generation.load(std::memory_order_acquire);
 		if(generation == -(writeGeneration - 1)) [[likely]]
 		{
 			// If it's not already ready, we make sure the reservation ticket is clear so we don't write it again...
@@ -1861,7 +1871,7 @@ public:
 	{
 		// See above for comments; this algorithm is identical except for construction via move.
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
-		int32_t writeGeneration = ticket.generation;
+		int64_t writeGeneration = ticket.generation;
 
 		if (!element) [[likely]]
 		{
@@ -1871,7 +1881,7 @@ public:
 		}
 
 
-		int32_t generation = element->generation.load(std::memory_order_acquire);
+		int64_t generation = element->generation.load(std::memory_order_acquire);
 		if (generation == -(writeGeneration - 1)) [[likely]]
 		{
 			ticket.ptr = nullptr;
@@ -1911,7 +1921,7 @@ public:
 		}
 
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
-		int32_t writeGeneration = ticket.generation;
+		int64_t writeGeneration = ticket.generation;
 
 		size_t spins = 0;
 		while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
@@ -1950,7 +1960,7 @@ public:
 		}
 
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
-		int32_t writeGeneration = ticket.generation;
+		int64_t writeGeneration = ticket.generation;
 
 		size_t spins = 0;
 		while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
@@ -1991,7 +2001,7 @@ public:
 		// See above for comments; this algorithm is identical except we're operating on m_readIdx
 		// instead of m_writeIdx, and destructing the element instead of constructing it.
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
-		int32_t readGeneration = ticket.generation;
+		int64_t readGeneration = ticket.generation;
 
 		if(!element) [[likely]]
 		{
@@ -2005,7 +2015,7 @@ public:
 			m_outstanding.fetch_add(-1, std::memory_order_relaxed);
 		}
 
-		int32_t generation = element->generation.load(std::memory_order_acquire);
+		int64_t generation = element->generation.load(std::memory_order_acquire);
 		if(generation == readGeneration) [[likely]]
 		{
 			ticket.ptr = nullptr;
@@ -2038,7 +2048,7 @@ public:
 		}
 
 		BufferElement* element = reinterpret_cast<BufferElement*>(ticket.ptr);
-		int32_t readGeneration = ticket.generation;
+		int64_t readGeneration = ticket.generation;
 
 		size_t spins = 0;
 		while (element->generation.load(std::memory_order_acquire) != readGeneration) [[unlikely]]
@@ -2167,7 +2177,7 @@ public:
 		inline bool TryReadNext(t_ElementType& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
-			int32_t readGeneration = (m_idx >> c_generationOp) + 1;
+			int64_t readGeneration = (m_idx >> c_generationOp) + 1;
 			if (element->generation.load(std::memory_order_acquire) != readGeneration)
 			{
 				return false;
@@ -2187,7 +2197,7 @@ public:
 		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
-			int32_t readGeneration = (m_idx >> c_generationOp) + 1;
+			int64_t readGeneration = (m_idx >> c_generationOp) + 1;
 
 			size_t spins = 0;
 			while (element->generation.load(std::memory_order_acquire) != readGeneration) [[unlikely]]
@@ -2280,7 +2290,7 @@ public:
 		inline bool TryWriteNextMove(t_ElementType& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
-			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
+			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 			{
 				return false;
@@ -2299,7 +2309,7 @@ public:
 		inline bool TryWriteNext(t_ElementType const& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
-			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
+			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 			{
 				return false;
@@ -2327,7 +2337,7 @@ public:
 		inline void WriteNextMoveWait(t_ElementType& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
-			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
+			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 
 			size_t spins = 0;
 			while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
@@ -2356,7 +2366,7 @@ public:
 		inline void WriteNextWait(t_ElementType const& val)
 		{
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
-			int32_t writeGeneration = (m_idx >> c_generationOp) + 1;
+			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 
 			size_t spins = 0;
 			while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
