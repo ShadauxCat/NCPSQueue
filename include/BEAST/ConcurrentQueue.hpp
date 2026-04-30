@@ -469,7 +469,7 @@ public:
 	void Cleanup()
 	{
 		BufferElement* element = this->GetForRead();
-		while(element < m_end && element->notifier == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
+		while(element < m_end && element->notifier == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 		{
 			element->item.~t_ElementType();
 			element = this->GetForRead();
@@ -990,7 +990,7 @@ public:
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(val);
 		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
-		auto notifier = element.notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
+		auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 		if constexpr (t_EnableIdleSleep)
 		{
 			if (notifier != nullptr) [[unlikely]]
@@ -1014,7 +1014,7 @@ public:
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(std::move(val));
 		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
-		auto notifier = element.notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
+		auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 		if constexpr (t_EnableIdleSleep)
 		{
 			if (notifier != nullptr) [[unlikely]]
@@ -1075,7 +1075,7 @@ public:
 					}
 				}
 				new (&element->item) t_ElementType(vals[i]);
-				auto notifier = element->notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
+				auto notifier = element->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 				if constexpr (t_EnableIdleSleep)
 				{
 					if (notifier != nullptr) [[unlikely]]
@@ -1211,7 +1211,7 @@ public:
 		// If not, we're going to remember this element in the reservation ticket and come back to it later.
 		// This definitively prevents any race conditions involved in attempting to correct for overcommit.
 		auto notifier = element->notifier.load(std::memory_order_acquire);
-		if(notifier == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[likely]]
+		if(notifier == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[likely]]
 		{
 			// If the element did have valid data, we need to make sure our ticket's not holding any cache information.
 			// Otherwise we'd just keep ending up reading the same cached element over and over.
@@ -1221,7 +1221,7 @@ public:
 			// Then we can return true - success!
 			val = std::move(element->item);
 			element->item.~t_ElementType();
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
+			BEAST_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 			// Surprisingly, even though the ability exists to store a local count on the ticket
 			// and consume it as a single operation only when switching buffers, in practice, in
@@ -1251,7 +1251,7 @@ public:
 			}
 		}
 		size_t spins = 0;
-		while (ticket.ptr->notifier.load(std::memory_order_acquire) == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) [[unlikely]]
+		while (ticket.ptr->notifier.load(std::memory_order_acquire) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) [[unlikely]]
 		{
 			BEAST_YIELD();
 			if constexpr (t_EnableIdleSleep)
@@ -1260,7 +1260,7 @@ public:
 				{
 					std::binary_semaphore semaphore(0);
 					std::binary_semaphore* previous = ticket.ptr->notifier.exchange(&semaphore, std::memory_order_acq_rel);
-					if (previous != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
+					if (previous != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 					{
 						semaphore.acquire();
 					}
@@ -1270,7 +1270,7 @@ public:
 		}
 		val = std::move(ticket.ptr->item);
 		ticket.ptr->item.~t_ElementType();
-		BEAST_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange((Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) == (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
+		BEAST_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 		consume_(ticket.buffer, 1);
 		return;
@@ -1397,7 +1397,7 @@ public:
 					}
 				}
 			}
-			if(m_element->notifier.load(std::memory_order_acquire) != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
+			if(m_element->notifier.load(std::memory_order_acquire) != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
 			{
 				m_pendingRead = true;
 				return false;
@@ -1446,7 +1446,7 @@ public:
 			}
 
 			size_t spins = 0;
-			while (m_element->notifier.load(std::memory_order_acquire) != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
+			while (m_element->notifier.load(std::memory_order_acquire) != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
 			{
 				BEAST_YIELD();
 				if constexpr (t_EnableIdleSleep)
@@ -1455,7 +1455,7 @@ public:
 					{
 						std::binary_semaphore semaphore(0);
 						std::binary_semaphore* previous = m_element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
-						if (previous != (Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
+						if (previous != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 						{
 							semaphore.acquire();
 						}
