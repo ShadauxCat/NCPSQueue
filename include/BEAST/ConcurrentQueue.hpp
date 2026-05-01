@@ -60,10 +60,11 @@ BEAST_FORCE_INLINE void BEAST_YIELD()
 {
 #ifdef _WIN32
 	__dmb(_ARM_BARRIER_ISHST);
-#else
-	asm volatile("dmb ishst" ::: "memory")
-#endif
 	__yield();
+#else
+	asm volatile("dmb ishst" ::: "memory");
+	asm volatile("yield");
+#endif
 }
 #else
 #	include <immintrin.h>
