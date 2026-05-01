@@ -100,6 +100,12 @@ def installDependencies(buildPath, externalPath):
 		csbuildPath,
 	]
 	_runCmd(cmd, "Failed to install 'csbuild' to Python virtual environment")
+	cmd = [
+		pythonExePath,
+		"-m", "pip",
+		"install", "plotly", "numpy"
+	]
+	_runCmd(cmd, "Failed to install 'plotly' to Python virtual environment")
 
 ########################################################################################################################
 
