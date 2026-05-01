@@ -310,7 +310,7 @@ public:
 		size_t totalRemaining = nElements;
 		while (totalRemaining > 0)
 		{
-			m_queue.PopBatch(batch, std::min(t_BatchSize, totalRemaining));
+			m_queue.PopBatchWait(batch, std::min(t_BatchSize, totalRemaining));
 			while (batch.More())
 			{
 				t_ElementType data;

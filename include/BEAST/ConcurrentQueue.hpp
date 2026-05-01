@@ -990,13 +990,17 @@ public:
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(val);
 		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
-		auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 		if constexpr (t_EnableIdleSleep)
 		{
+			auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 			if (notifier != nullptr) [[unlikely]]
 			{
 				notifier->release();
 			}
+		}
+		else
+		{
+			element.notifier.store(true);
 		}
 		if constexpr(t_EnableBatch)
 		{
@@ -1014,13 +1018,17 @@ public:
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(std::move(val));
 		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
-		auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 		if constexpr (t_EnableIdleSleep)
 		{
+			auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 			if (notifier != nullptr) [[unlikely]]
 			{
 				notifier->release();
 			}
+		}
+		else
+		{
+			element.notifier.store(true);
 		}
 		if constexpr(t_EnableBatch)
 		{
@@ -1075,13 +1083,17 @@ public:
 					}
 				}
 				new (&element->item) t_ElementType(vals[i]);
-				auto notifier = element->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 				if constexpr (t_EnableIdleSleep)
 				{
+					auto notifier = element->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 					if (notifier != nullptr) [[unlikely]]
 					{
 						notifier->release();
 					}
+				}
+				else
+				{
+					element->notifier.store(true);
 				}
 				++element;
 			}
@@ -1366,6 +1378,12 @@ public:
 		 */
 		inline bool TryReadNext(t_ElementType& val)
 		{
+			if (m_primed) [[unlikely]]
+			{
+				val = t_ElementType(std::move(m_primer));
+				m_primed = false;
+				return true;
+			}
 			if(!m_pendingRead)
 			{
 				while(m_element >= m_end) [[unlikely]]
@@ -1413,6 +1431,12 @@ public:
 
 		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
 		{
+			if (m_primed) [[unlikely]]
+			{
+				val = t_ElementType(std::move(m_primer));
+				m_primed = false;
+				return;
+			}
 			if (!m_pendingRead)
 			{
 				while (m_element >= m_end) [[unlikely]]
@@ -1477,7 +1501,7 @@ public:
 		 *
 		 * @return true if there are elements left in the batch, false if the batch is exhausted
 		 */
-		inline bool More() { return (m_remaining > 0); }
+		inline bool More() { return (m_remaining > 0 || m_primed); }
 
 		~BatchPopList()
 		{
@@ -1537,6 +1561,9 @@ public:
 		ssize_t m_count{ 0 };
 		ssize_t m_consumed{ 0 };
 		bool m_pendingRead{ false };
+
+		bool m_primed{ false };
+		t_ElementType m_primer;
 	};
 
 	BatchPopList CreatePopList()
@@ -1629,6 +1656,26 @@ public:
 			result.m_buffer = buffer;
 			result.m_remaining = batchSize;
 			result.m_count = batchSize;
+		}
+	}
+
+	void PopBatchWait(BatchPopList& result, ssize_t maxCount, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	{
+		if constexpr (!t_EnableBatch)
+		{
+			throw std::logic_error("Batch operations are not enabled on this queue.");
+		}
+		else
+		{
+			PopBatch(result, maxCount);
+			if (!result.More())
+			{
+				t_ElementType primer;
+				PopWait(primer, maxSpinsBeforeSemaphoreWait);
+				PopBatch(result, maxCount - 1);
+				result.m_primed = true;
+				result.m_primer = t_ElementType(std::move(primer));
+			}
 		}
 	}
 
@@ -2176,6 +2223,12 @@ public:
 		 */
 		inline bool TryReadNext(t_ElementType& val)
 		{
+			if (m_primed) [[unlikely]]
+			{
+				val = t_ElementType(std::move(m_primer));
+				m_primed = false;
+				return true;
+			}
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int64_t readGeneration = (m_idx >> c_generationOp) + 1;
 			if (element->generation.load(std::memory_order_acquire) != readGeneration)
@@ -2196,6 +2249,12 @@ public:
 
 		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
 		{
+			if (m_primed) [[unlikely]]
+			{
+				val = t_ElementType(std::move(m_primer));
+				m_primed = false;
+				return;
+			}
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int64_t readGeneration = (m_idx >> c_generationOp) + 1;
 
@@ -2241,7 +2300,7 @@ public:
 		 *
 		 * @return true if there are elements left in the batch, false if the batch is exhausted
 		 */
-		inline bool More() { return (m_remaining > 0); }
+		inline bool More() { return (m_remaining > 0 || m_primed); }
 
 		~BatchPopList()
 		{
@@ -2282,6 +2341,9 @@ public:
 		BufferElement* m_buffer;
 		ssize_t m_remaining{ 0 };
 		ssize_t m_count{ 0 };
+
+		bool m_primed;
+		t_ElementType m_primer;
 	};
 
 	class BatchPushList
@@ -2289,6 +2351,13 @@ public:
 	public:
 		inline bool TryWriteNextMove(t_ElementType& val)
 		{
+			if (m_primer != nullptr) [[unlikely]]
+			{
+				new (&m_primer->item) t_ElementType(std::move(val));
+				m_primer->generation.store(m_primerGeneration, std::memory_order_release);
+				m_primer = nullptr;
+				return true;
+			}
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
@@ -2308,6 +2377,13 @@ public:
 
 		inline bool TryWriteNext(t_ElementType const& val)
 		{
+			if (m_primer != nullptr) [[unlikely]]
+			{
+				new (&m_primer->item) t_ElementType(val);
+				m_primer->generation.store(m_primerGeneration, std::memory_order_release);
+				m_primer = nullptr;
+				return true;
+			}
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 			if (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
@@ -2336,6 +2412,13 @@ public:
 
 		inline void WriteNextMoveWait(t_ElementType& val)
 		{
+			if (m_primer != nullptr) [[unlikely]]
+			{
+				new (&m_primer->item) t_ElementType(std::move(val));
+				m_primer->generation.store(m_primerGeneration, std::memory_order_release);
+				m_primer = nullptr;
+				return;
+			}
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 
@@ -2365,6 +2448,13 @@ public:
 
 		inline void WriteNextWait(t_ElementType const& val)
 		{
+			if (m_primer != nullptr) [[unlikely]]
+			{
+				new (&m_primer->item) t_ElementType(val);
+				m_primer->generation.store(m_primerGeneration, std::memory_order_release);
+				m_primer = nullptr;
+				return;
+			}
 			BufferElement* element = m_buffer + (m_idx & (c_adjustedSize - 1));
 			int64_t writeGeneration = (m_idx >> c_generationOp) + 1;
 
@@ -2399,7 +2489,7 @@ public:
 		 */
 		inline bool More()
 		{
-			return (m_remaining > 0);
+			return (m_remaining > 0 || m_primer != nullptr);
 		}
 
 		~BatchPushList()
@@ -2441,6 +2531,8 @@ public:
 		BufferElement* m_buffer;
 		ssize_t m_remaining{ 0 };
 		ssize_t m_count{ 0 };
+		BufferElement* m_primer;
+		int64_t m_primerGeneration;
 	};
 
 	BatchPushList CreatePushList()
@@ -2468,6 +2560,39 @@ public:
 			enqueueList.m_idx = startIdx;
 			enqueueList.m_count = count;
 			enqueueList.m_remaining = count;
+		}
+	}
+
+	void PushBatchWait(BatchPushList& enqueueList, ssize_t count, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	{
+		if constexpr (!t_EnableBatch)
+		{
+			throw std::logic_error("Batch operations are not enabled on this queue.");
+		}
+		else
+		{
+			PushBatch(enqueueList, count);
+
+			if (!enqueueList.More()) [[unlikely]]
+			{
+				size_t idx = m_writeIdx.fetch_add(1, std::memory_order_acq_rel);
+				BufferElement* element = m_buffer + (idx & (c_adjustedSize - 1));
+				int64_t writeGeneration = (idx >> c_generationOp) + 1;
+
+				// Check the generation flag. If it's not at current generation - 1, we can't overwrite it and have to return false,
+				// storing this element on the reservation ticket to make sure we try it again later.
+				int64_t generation = element->generation.load(std::memory_order_acquire);
+
+				size_t spins = 0;
+				while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
+				{
+					BEAST_YIELD();
+				}
+
+				PushBatch(enqueueList, count - 1);
+				enqueueList.m_primer = element;
+				enqueueList.m_primerGeneration = writeGeneration;
+			}
 		}
 	}
 
@@ -2549,6 +2674,26 @@ public:
 			result.m_idx = startIdx;
 			result.m_count = batchSize;
 			result.m_remaining = batchSize;
+		}
+	}
+
+	void PopBatchWait(BatchPopList& result, ssize_t maxCount, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	{
+		if constexpr (!t_EnableBatch)
+		{
+			throw std::logic_error("Batch operations are not enabled on this queue.");
+		}
+		else
+		{
+			PopBatch(result, maxCount);
+			if (!result.More())
+			{
+				t_ElementType primer;
+				PopWait(primer, maxSpinsBeforeSemaphoreWait);
+				PopBatch(result, maxCount - 1);
+				result.m_primed = true;
+				result.m_primer = t_ElementType(std::move(primer));
+			}
 		}
 	}
 

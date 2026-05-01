@@ -279,7 +279,7 @@ public:
 		ssize_t numWritten = 0;
 		while (numWritten < nElements)
 		{
-			m_queue->PushBatch(batch, std::min(ssize_t(t_BatchSize), (ssize_t)nElements - numWritten));
+			m_queue->PushBatchWait(batch, std::min(ssize_t(t_BatchSize), (ssize_t)nElements - numWritten));
 			while (batch.More())
 			{
 				t_ElementType data = t_ElementType(offset + numWritten);
@@ -299,7 +299,7 @@ public:
 		size_t totalRemaining = nElements;
 		while (totalRemaining > 0)
 		{
-			m_queue->PopBatch(batch, std::min(t_BatchSize, totalRemaining));
+			m_queue->PopBatchWait(batch, std::min(t_BatchSize, totalRemaining));
 			while (batch.More())
 			{
 				t_ElementType data;
