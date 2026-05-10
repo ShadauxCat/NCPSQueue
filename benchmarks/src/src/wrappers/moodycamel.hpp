@@ -16,7 +16,7 @@ class QueueWrapper<moodycamel::ConcurrentQueue<t_ElementType>, t_TicketType>
 {
 public:
 	QueueWrapper()
-		: m_queue(benchmarkConfig::numElements<t_ElementType>::value)
+		: m_queue(benchmarkConfig::numElements<t_ElementType>::valueSingle)
 	{
 	}
 
@@ -132,7 +132,7 @@ class QueueWrapper<moodycamel::ConcurrentQueue<t_ElementType>, TicketType::NONE>
 {
 public:
 	QueueWrapper()
-		: m_queue(benchmarkConfig::numElements<t_ElementType>::value)
+		: m_queue(benchmarkConfig::numElements<t_ElementType>::valueSingle)
 	{
 	}
 
@@ -302,7 +302,7 @@ class QueueWrapper<moodycamel::ConcurrentQueue<t_ElementType>, TicketType::BATCH
 {
 public:
 	QueueWrapper()
-		: m_queue(benchmarkConfig::numElements<t_ElementType>::value)
+		: m_queue(benchmarkConfig::numElements<t_ElementType>::valueBatch)
 	{}
 
 	void enqueue(size_t nElements, size_t offset, int tid)

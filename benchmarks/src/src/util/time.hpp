@@ -70,7 +70,7 @@ void latencyTestPing(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2, int tid
 {
 	++started;
 	while (timer.load() == -1) {}
-	for (size_t i = 0; i < benchmarkConfig::numElements<t_ElementType>::value /10; ++i)
+	for (size_t i = 0; i < benchmarkConfig::numElements<t_ElementType>::valueSingle / 10; ++i)
 	{
 		wrapper1->enqueue(batchsize, 0, tid);
 		wrapper2->dequeue(batchsize, tid);
@@ -82,7 +82,7 @@ template<typename t_ElementType, typename t_QueueWrapper>
 void latencyTestPong(t_QueueWrapper* wrapper1, t_QueueWrapper* wrapper2, int tid, size_t batchsize)
 {
 	++started;
-	for (size_t i = 0; i < benchmarkConfig::numElements<t_ElementType>::value /10; ++i)
+	for (size_t i = 0; i < benchmarkConfig::numElements<t_ElementType>::valueSingle / 10; ++i)
 	{
 		wrapper1->dequeue(batchsize, tid);
 		wrapper2->enqueue(batchsize, 0, tid);

@@ -13,7 +13,7 @@ class QueueWrapper<xenium::nikolaev_bounded_queue<t_ElementType, xenium::policy:
 {
 public:
 	QueueWrapper()
-		: m_queue(benchmarkConfig::numElements<t_ElementType>::value)
+		: m_queue(benchmarkConfig::numElements<t_ElementType>::valueSingle)
 	{
 	}
 

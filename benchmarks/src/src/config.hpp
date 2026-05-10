@@ -23,7 +23,8 @@ namespace benchmarkConfig
 	class numElements
 	{
 	public:
-		static constexpr size_t value = 25000000;
+		static constexpr size_t valueSingle = 2500000;
+		static constexpr size_t valueBatch = 25000000;
 	};
 
 	// More than this and the bounded queue creates a compile error for the static array being too large.
@@ -31,13 +32,14 @@ namespace benchmarkConfig
 	class numElements<FixedStaticString<64>>
 	{
 	public:
-		static constexpr size_t value = 10000000;
+		static constexpr size_t valueSingle = 1000000;
+		static constexpr size_t valueBatch = 10000000;
 	};
 
 #if RUNMODE == MODE_VERIFY
 	static constexpr int nIters = 1;
 #else
-	static constexpr int nIters = 25;
+	static constexpr int nIters = 10;
 #endif
 
 	static constexpr bool pinThreads = false;
