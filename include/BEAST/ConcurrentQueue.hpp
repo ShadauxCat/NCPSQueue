@@ -2343,7 +2343,7 @@ public:
 		ssize_t m_remaining{ 0 };
 		ssize_t m_count{ 0 };
 
-		bool m_primed;
+		bool m_primed{ false };
 		t_ElementType m_primer;
 	};
 
@@ -2532,7 +2532,7 @@ public:
 		BufferElement* m_buffer;
 		ssize_t m_remaining{ 0 };
 		ssize_t m_count{ 0 };
-		BufferElement* m_primer;
+		BufferElement* m_primer{ nullptr };
 		int64_t m_primerGeneration;
 	};
 
