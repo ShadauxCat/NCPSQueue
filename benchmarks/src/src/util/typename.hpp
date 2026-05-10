@@ -77,3 +77,45 @@ public:
 		return ret;
 	}
 };
+
+#ifdef HAS_MOODYCAMEL
+template<typename t_ElementType, size_t t_Size>
+struct TypeName<MoodyCamelWithSize<t_ElementType, t_Size>>
+{
+	static std::string GetName(PointerQueuePolicy pointerQueuePolicy, TicketType ticketType, size_t batchCount, bool truncate = false)
+	{
+		std::string ret = TypeName<moodycamel::ConcurrentQueue<t_ElementType>>::GetName(PointerQueuePolicy::None, TicketType::NA, 0, truncate);
+
+		switch (pointerQueuePolicy)
+		{
+		case PointerQueuePolicy::Preallocate:
+			ret += " [Preallocated]";
+			break;
+		case PointerQueuePolicy::Dynamic:
+			ret += " [Dynamic]";
+			break;
+		default:
+			break;
+		}
+		switch (ticketType)
+		{
+		case TicketType::PERSISTENT:
+			ret += " [With Tokens]";
+			break;
+		case TicketType::NONE:
+			ret += " [No Tokens]";
+			break;
+		case TicketType::BATCH:
+		{
+			std::stringstream num;
+			num << batchCount;
+			ret += " [Batch (" + num.str() + ")]";
+			break;
+		}
+		default:
+			break;
+		}
+		return ret;
+	}
+};
+#endif

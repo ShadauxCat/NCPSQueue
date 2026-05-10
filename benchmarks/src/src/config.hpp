@@ -23,7 +23,7 @@ namespace benchmarkConfig
 	class numElements
 	{
 	public:
-		static constexpr size_t valueSingle = 2500000;
+		static constexpr size_t valueSingle = 10000000;
 		static constexpr size_t valueBatch = 25000000;
 	};
 
@@ -32,19 +32,27 @@ namespace benchmarkConfig
 	class numElements<FixedStaticString<64>>
 	{
 	public:
-		static constexpr size_t valueSingle = 1000000;
+		static constexpr size_t valueSingle = 5000000;
 		static constexpr size_t valueBatch = 10000000;
 	};
 
 #if RUNMODE == MODE_VERIFY
 	static constexpr int nIters = 1;
+	static constexpr bool beastFullSet = true;
+	static constexpr bool moodyCamelFullSet = true;
 #else
 	static constexpr int nIters = 10;
+	static constexpr bool beastFullSet = false;
+	static constexpr bool moodyCamelFullSet = false;
 #endif
 
 	static constexpr bool pinThreads = false;
 
 	static constexpr TestType testType = TestType::Both;
+
+	// If true, the test will only use MIN_PRODUCERS and MAX_PRODUCERS
+	// MIN_CONSUMERS and MAX_CONSUMERS will be ignored
+	static constexpr bool symmetricThreadsOnly = false;
 }
 
 // Can't use constexpr here because hardware_concurrency() isn't constexpr
@@ -80,8 +88,6 @@ namespace benchmarkTests
 #include "wrappers/1024Cores.hpp"
 // TBB
 #include "wrappers/TBB.hpp"
-// moodycamel
-#include "wrappers/moodycamel.hpp"
 
 // The following queues don't work correctly on ARM.
 #if !defined(__aarch64__) && !defined(_M_ARM64) && 0
@@ -110,11 +116,15 @@ namespace benchmarkTests
 #include "wrappers/xenium/Kirsch.hpp"
 #endif
 
-#include "wrappers/xenium/MichaelScott.hpp"
+// Excluded because it's incredibly slow and leaks memory.
+//#include "wrappers/xenium/MichaelScott.hpp"
 #include "wrappers/xenium/Nikolaev.hpp"
 #include "wrappers/xenium/RamalheteQueue.hpp"
 // Excluded because the 1024Cores queue above is the original canonical version of this algorithm.
 //#include "wrappers/xenium/VyukovBoundedQueue.hpp"
+
+// moodycamel
+#include "wrappers/moodycamel.hpp"
 #endif
 
 // BEAST
