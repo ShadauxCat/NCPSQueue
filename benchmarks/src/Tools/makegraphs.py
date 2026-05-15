@@ -21,7 +21,8 @@ parser.add_argument("--spline", "-s", help="Smooth line graphs", action="store_t
 parser.add_argument("--no-singles", '-n', help="Exclude results with 1 producer and 1 consumer", action="store_true")
 parser.add_argument("--filter", "-f", help="Exclude types including this substring", nargs="*", action="extend", default=[])
 parser.add_argument("--neg-filter", "-F", help="Exclude types not including this substring", nargs="*", action="extend", default=[])
-parser.add_argument("--max-compare-cores", help="Maximum total cores to use in comparison graphs", default=24, type=int)
+parser.add_argument("--max-compare-cores", help="Maximum total cores to use in comparison graphs", default=0, type=int)
+parser.add_argument("--heatmap-compare", "-H", help="Generate comparisons against the stated heatmap (full output string)")
 parser.add_argument("--builtin-filter-batch-cmp", "-B", help="Run a batch comparison. Equivalent to --neg-filter='[Batch'", action="store_true")
 parser.add_argument("--builtin-filter-single-cmp", "-S", help="Run a single-item comparison. Equivalent to --filter='[Batch'", action="store_true")
 parser.add_argument("--builtin-filter-competitive-cmp", "-C", help="Run a competitive comparison, comparing only the best configurations for each queue. Does some more complex filtering to include only those items.", action="store_true")
@@ -63,10 +64,13 @@ dequeueData = {}
 dequeueEmptyData = {}
 latencyData = {}
 symmetricData = {}
-prodOverConData = {}
-conOverProdData = {}
-prodWayOverConData = {}
-conWayOverProdData = {}
+conData1Producer = {}
+conDataNProducers = {}
+conDataNHalfProducers = {}
+prodData1Consumer = {}
+prodDataNConsumers = {}
+prodDataNHalfConsumers = {}
+
 	
 colorscale = [
 	[0.0, 'rgb(0,0,0)'],
@@ -229,19 +233,6 @@ for line in text.splitlines():
 			lastElemType = elemType
 			idx = 0
 		
-		good = True
-		for filter in args.filter:
-			if filter in name:
-				good = False
-				break
-		for filter in args.neg_filter:
-			if filter not in name:
-				good = False
-				break
-		if not good:
-			continue
-		
-		
 		if name not in lineColors:
 			lineColors[name] = visuallyDistinctColors[idx % len(visuallyDistinctColors)]
 			idx += 1
@@ -295,11 +286,13 @@ allowedComparisons=[
 	"michael_scott_queue",
 	"nikolaev_bounded_queue",
 	"ramalhete_queue",
-	"MoodyCamelWithSize-8192",
-	"BEAST-8192",
-	"BEAST-1000000",
-	"BEAST-bounded-131072",
-	"BEAST-bounded-1000000"
+	"moodycamel-65536",
+	"QAC-16384",
+	"QAC-1000000",
+	"QAC-2500000",
+	"QAC-bounded-131072",
+	"QAC-bounded-1000000",
+	"QAC-bounded-2500000"
 ]
 
 latencyKeys = {}
@@ -307,6 +300,7 @@ latencyVals = {}
 latencyMin = {}
 latencyMax = {}
 latencyTxt = {}
+compareHeatmap = None
 
 def FormatLargeNumber(num):
 	if num is None:
@@ -326,8 +320,22 @@ def FormatLargeNumber(num):
 patterns = [ "", "/", "\\", "x", "-", "|", "+", "." ]
 patternIdx = -1
 patternLock = {}
+N = 0
 
-def print_graphs(name, d, minVal, maxVal):
+def getPrintName(name):
+	printName = name.replace("moodycamel::ConcurrentQueue", "moodycamel")
+	printName = printName.replace("MoodyCamelWithSize", "moodycamel")
+	printName = printName.replace("QAC::ConcurrentQueue", "QAC")
+	printName = printName.replace("::ConcurrentBoundedQueue", "-bounded")
+	printName = printName.replace("ext_", "")
+	printName = printName.replace("::mpmc_bounded_queue", "")
+	printName = printName.replace("::detail::d2::concurrent_bounded_queue", "-bounded")
+	printName = printName.replace("::detail::d2::concurrent_queue", "")
+	printName = printName.replace("xenium::", "")
+	return printName
+
+def print_graphs(name, d, minVal, maxVal, forCompare = False):
+	printName = getPrintName(name)
 	for type, listOfDatapoints in d.items():
 		keys = []
 		vals = []
@@ -336,33 +344,37 @@ def print_graphs(name, d, minVal, maxVal):
 		sizes = []
 		texts = []
 		elementType = GetElementType(name)
-		
-		printName = name.replace("moodycamel::ConcurrentQueue", "moodycamel")
-		printName = printName.replace("MoodyCamelWithSize", "moodycamel")
-		printName = printName.replace("BEAST::ConcurrentQueue", "BEAST")
-		printName = printName.replace("::ConcurrentBoundedQueue", "-bounded")
-		printName = printName.replace("ext_", "")
-		printName = printName.replace("::mpmc_bounded_queue", "")
-		printName = printName.replace("::detail::d2::concurrent_bounded_queue", "-bounded")
-		printName = printName.replace("::detail::d2::concurrent_queue", "")
-		printName = printName.replace("xenium::", "")
 
-		if args.builtin_filter_competitive_cmp:
-			noComp = False
-			baseName = printName.split(" ")[0]
-			sizeCheck = printName.split("size ")
-			if len(sizeCheck) == 2:
-				size = sizeCheck[1].split(")")[0]
-				size = size.split(",")[0]
-				baseName += "-" + size
-			if "+b" in name and "[Batch" not in name:
-				noComp = True
-			elif "+n" in name or "[Ephemeral Tickets]" in name or "[Dynamic]" in name or "[No Tickets]" in name:
-				noComp = True
-			else:
-				noComp = baseName not in allowedComparisons
-			if noComp:
+		if forCompare and printName != args.heatmap_compare:
+			continue
+		if not forCompare:
+			good = True
+			for filter in args.filter:
+				if filter in name:
+					good = False
+					break
+			for filter in args.neg_filter:
+				if filter not in name:
+					good = False
+					break
+			if not good:
 				continue
+			if args.builtin_filter_competitive_cmp:
+				noComp = False
+				baseName = printName.split(" ")[0]
+				sizeCheck = printName.split("size ")
+				if len(sizeCheck) == 2:
+					size = sizeCheck[1].split(")")[0]
+					size = size.split(",")[0]
+					baseName += "-" + size
+				if "+b" in name and "[Batch" not in name:
+					noComp = True
+				elif "+n" in name or "[Ephemeral Tickets]" in name or "[Dynamic]" in name or "[No Tickets]" in name:
+					noComp = True
+				else:
+					noComp = baseName not in allowedComparisons
+				if noComp:
+					continue
 
 		if printName not in patternLock:
 			global patternIdx
@@ -370,6 +382,12 @@ def print_graphs(name, d, minVal, maxVal):
 			patternLock[printName] = patterns[patternIdx % len(patterns)]
 
 		pattern = patternLock[printName]
+
+		dir = os.path.join("gen_html", type.replace("+", "_"), elementType)
+		if args.heatmap_compare:
+			dir = os.path.join(dir, "VS " + args.heatmap_compare)
+		if not os.path.exists(dir):
+			os.makedirs(dir)
 
 		if type == "latency":
 			for dataPoints in listOfDatapoints:
@@ -412,7 +430,10 @@ def print_graphs(name, d, minVal, maxVal):
 					type="data",
 					symmetric=False,
 					array=maxVals,
-					arrayminus=minVals
+					arrayminus=minVals,
+					color="gray",
+					thickness=2,
+					width=5,
 				),
 				name=printName,
 				hoverlabel = dict(namelength = -1),
@@ -430,10 +451,7 @@ def print_graphs(name, d, minVal, maxVal):
 			else:
 				latencyData.setdefault(elementType, []).append(trace)
 
-			if type != "latency":
-				dir = os.path.join("gen_html", type, elementType)
-				if not os.path.exists(dir):
-					os.makedirs(dir)
+			if type != "latency" and not compOnly and not args.heatmap_compare:
 
 				trace = plotly.graph_objs.Scatter(
 					x=keys,
@@ -447,7 +465,7 @@ def print_graphs(name, d, minVal, maxVal):
 				if type == "deq_empty":
 					label = "Dequeue From Empty"
 				else:
-					label = type.title()
+					label = "Uncontended " + type.title()
 
 				layout = plotly.graph_objs.Layout(
 					title = '{} ({} <{}>)'.format(label, printName, elementType),
@@ -470,8 +488,8 @@ def print_graphs(name, d, minVal, maxVal):
 				)
 				plotly.offline.plot(
 					fig,
-					filename = os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-"), type, elementType)),
-					image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-"), type,elementType), image_height=imageHeight, image_width=imageWidth
+					filename = os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-").replace("<64>", ""), type, elementType)),
+					image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-").replace("<64>", ""), type,elementType), image_height=imageHeight, image_width=imageWidth
 				)
 		elif type == "enq+deq":
 			colors = []
@@ -483,49 +501,80 @@ def print_graphs(name, d, minVal, maxVal):
 			symMax = []
 			symMin = []
 			symText = []
-			prodOverCons = []
-			pOCMax = []
-			pOCMin = []
-			pOCText = []
-			conOverProds = []
-			cOPMax = []
-			cOPMin = []
-			cOPText = []
-			prodWayOverCons = []
-			pWOCMax = []
-			pWOCMin = []
-			pWOCText = []
-			conWayOverProds = []
-			cWOPMax = []
-			cWOPMin = []
-			cWOPText = []
+			
+			cons1Producer = []
+			c1pMax = []
+			c1pMin = []
+			c1pText = []
+			consNProducers = []
+			cNpMax = []
+			cNpMin = []
+			cNpText = []
+			consNHalfProducers = []
+			cNHpMax = []
+			cNHpMin = []
+			cNHpText = []
+			
+			prods1Consumer = []
+			p1cMax = []
+			p1cMin = []
+			p1cText = []
+			prodsNConsumers = []
+			pNcMax = []
+			pNcMin = []
+			pNcText = []
+			prodsNHalfConsumers = []
+			pNHcMax = []
+			pNHcMin = []
+			pNHcText = []
+
+			heatmapMin = 0
+			heatmapMax = 0
+
+			global N
 			for dataPoints in listOfDatapoints:
-				if dataPoints[0] + dataPoints[1] <= args.max_compare_cores:
+				N = max(N, dataPoints[0], dataPoints[1])
+
+			cores = args.max_compare_cores if args.max_compare_cores != 0 else N
+			global compareHeatmap
+			
+			for dataPoints in listOfDatapoints:
+				if dataPoints[0] + dataPoints[1] <= cores:
 					if dataPoints[0] == dataPoints[1]:
 						symmetrics.append(dataPoints[2])
-						symMin.append(dataPoints[3])
-						symMax.append(dataPoints[4])
+						symMin.append(dataPoints[2] - dataPoints[3])
+						symMax.append(dataPoints[4] - dataPoints[2])
 						symText.append(FormatLargeNumber(dataPoints[2]))
-					elif dataPoints[0] == dataPoints[1] * 2:
-						prodOverCons.append(dataPoints[2])
-						pOCMin.append(dataPoints[3])
-						pOCMax.append(dataPoints[4])
-						pOCText.append(FormatLargeNumber(dataPoints[2]))
-					elif dataPoints[0] * 2 == dataPoints[1]:
-						conOverProds.append(dataPoints[2])
-						cOPMax.append(dataPoints[3])
-						cOPMin.append(dataPoints[4])
-						cOPText.append(FormatLargeNumber(dataPoints[2]))
-					elif dataPoints[0] == dataPoints[1] * 3:
-						prodWayOverCons.append(dataPoints[2])
-						pWOCMin.append(dataPoints[3])
-						pWOCMax.append(dataPoints[4])
-						pWOCText.append(FormatLargeNumber(dataPoints[2]))
-					elif dataPoints[0] * 3 == dataPoints[1]:
-						conWayOverProds.append(dataPoints[2])
-						cWOPMax.append(dataPoints[3])
-						cWOPMin.append(dataPoints[4])
-						cWOPText.append(FormatLargeNumber(dataPoints[2]))
+					if dataPoints[0] == N/2:
+						consNHalfProducers.append(dataPoints[2])
+						cNHpMin.append(dataPoints[2] - dataPoints[3])
+						cNHpMax.append(dataPoints[4] - dataPoints[2])
+						cNHpText.append(FormatLargeNumber(dataPoints[2]))
+					if dataPoints[1] == N/2:
+						prodsNHalfConsumers.append(dataPoints[2])
+						pNHcMin.append(dataPoints[2] - dataPoints[3])
+						pNHcMax.append(dataPoints[4] - dataPoints[2])
+						pNHcText.append(FormatLargeNumber(dataPoints[2]))
+				if dataPoints[0] == N:
+					consNProducers.append(dataPoints[2])
+					cNpMin.append(dataPoints[2] - dataPoints[3])
+					cNpMax.append(dataPoints[4] - dataPoints[2])
+					cNpText.append(FormatLargeNumber(dataPoints[2]))
+				if dataPoints[1] == N:
+					prodsNConsumers.append(dataPoints[2])
+					pNcMin.append(dataPoints[2] - dataPoints[3])
+					pNcMax.append(dataPoints[4] - dataPoints[2])
+					pNcText.append(FormatLargeNumber(dataPoints[2]))
+				if dataPoints[0] == 1 and dataPoints[1] <= cores:
+					cons1Producer.append(dataPoints[2])
+					c1pMin.append(dataPoints[2] - dataPoints[3])
+					c1pMax.append(dataPoints[4] - dataPoints[2])
+					c1pText.append(FormatLargeNumber(dataPoints[2]))
+				if dataPoints[1] == 1 and dataPoints[0] <= cores:
+					prods1Consumer.append(dataPoints[2])
+					p1cMin.append(dataPoints[2] - dataPoints[3])
+					p1cMax.append(dataPoints[4] - dataPoints[2])
+					p1cText.append(FormatLargeNumber(dataPoints[2]))
 
 				keys.append(dataPoints[0])
 				vals.append(dataPoints[1])
@@ -538,7 +587,13 @@ def print_graphs(name, d, minVal, maxVal):
 					heatmaptxt[dataPoints[1]].append(None)
 					
 				heatmap[dataPoints[1]][dataPoints[0]] = dataPoints[2]
-				heatmaptxt[dataPoints[1]][dataPoints[0]] = "throughput: {}op/s".format(intWithCommas(dataPoints[2]))
+				if args.heatmap_compare and not forCompare:
+					heatmap[dataPoints[1]][dataPoints[0]] -= compareHeatmap[dataPoints[1]][dataPoints[0]]
+					heatmapMin = min(heatmapMin, heatmap[dataPoints[1]][dataPoints[0]])
+					heatmapMax = max(heatmapMax, heatmap[dataPoints[1]][dataPoints[0]])
+					heatmaptxt[dataPoints[1]][dataPoints[0]] = "diff: {}op/s".format(intWithCommas(heatmap[dataPoints[1]][dataPoints[0]]))
+				else:
+					heatmaptxt[dataPoints[1]][dataPoints[0]] = "throughput: {}op/s".format(intWithCommas(dataPoints[2]))
 				
 				if dataPoints[2] is None:
 					colors.append(0)
@@ -551,6 +606,10 @@ def print_graphs(name, d, minVal, maxVal):
 						"throughput: {}op/s".format(intWithCommas(dataPoints[2]))
 					)
 
+			if forCompare:
+				compareHeatmap = heatmap
+				return
+
 			compKeys = [x*2 for x in range(1,len(symmetrics)+1)]
 			trace = plotly.graph_objs.Bar(
 				x=compKeys,
@@ -558,8 +617,11 @@ def print_graphs(name, d, minVal, maxVal):
 				error_y=dict(
 					type="data",
 					symmetric=False,
-					array=maxVals,
-					arrayminus=minVals
+					array=symMax,
+					arrayminus=symMin,
+					color="gray",
+					thickness=2,
+					width=5,
 				),
 				name=printName,
 				hoverlabel=dict(namelength=-1),
@@ -569,79 +631,154 @@ def print_graphs(name, d, minVal, maxVal):
 			)
 			symmetricData.setdefault(elementType, []).extend([trace])
 
-			compKeys = [x*3 for x in range(1,len(prodOverCons)+1)]
+			compKeys = [x for x in range(1,len(prods1Consumer)+1)]
 			trace = plotly.graph_objs.Bar(
 				x=compKeys,
-				y=prodOverCons,
+				y=prods1Consumer,
 				error_y=dict(
 					type="data",
 					symmetric=False,
-					array=maxVals,
-					arrayminus=minVals
+					array=p1cMax,
+					arrayminus=p1cMin,
+					color="gray",
+					thickness=2,
+					width=5,
 				),
 				name=printName,
 				hoverlabel=dict(namelength=-1),
-				text=pOCText,
+				text=p1cText,
 				marker_pattern_shape=pattern,
 				marker=dict(color=lineColors[name]),
 			)
-			prodOverConData.setdefault(elementType, []).extend([trace])
+			prodData1Consumer.setdefault(elementType, []).extend([trace])
 
-			compKeys = [x*3 for x in range(1,len(conOverProds)+1)]
+			compKeys = [x for x in range(1,len(prodsNConsumers)+1)]
 			trace = plotly.graph_objs.Bar(
 				x=compKeys,
-				y=conOverProds,
+				y=prodsNConsumers,
 				error_y=dict(
 					type="data",
 					symmetric=False,
-					array=maxVals,
-					arrayminus=minVals
+					array=pNcMax,
+					arrayminus=pNcMin,
+					color="gray",
+					thickness=2,
+					width=5,
 				),
 				name=printName,
 				hoverlabel=dict(namelength=-1),
-				text=cOPText,
+				text=pNcText,
 				marker_pattern_shape=pattern,
 				marker=dict(color=lineColors[name]),
 			)
-			conOverProdData.setdefault(elementType, []).extend([trace])
+			prodDataNConsumers.setdefault(elementType, []).extend([trace])
 
-			compKeys = [x*4 for x in range(1,len(prodWayOverCons)+1)]
+			compKeys = [x for x in range(1,len(prodsNHalfConsumers)+1)]
 			trace = plotly.graph_objs.Bar(
 				x=compKeys,
-				y=prodWayOverCons,
+				y=prodsNHalfConsumers,
 				error_y=dict(
 					type="data",
 					symmetric=False,
-					array=maxVals,
-					arrayminus=minVals
+					array=pNHcMax,
+					arrayminus=pNHcMin,
+					color="gray",
+					thickness=2,
+					width=5,
 				),
 				name=printName,
 				hoverlabel=dict(namelength=-1),
-				text=pWOCText,
+				text=pNHcText,
 				marker_pattern_shape=pattern,
 				marker=dict(color=lineColors[name]),
 			)
-			prodWayOverConData.setdefault(elementType, []).extend([trace])
+			prodDataNHalfConsumers.setdefault(elementType, []).extend([trace])
 
-			compKeys = [x*4 for x in range(1,len(conWayOverProds)+1)]
+			compKeys = [x for x in range(1,len(cons1Producer)+1)]
 			trace = plotly.graph_objs.Bar(
 				x=compKeys,
-				y=conWayOverProds,
+				y=cons1Producer,
 				error_y=dict(
 					type="data",
 					symmetric=False,
-					array=maxVals,
-					arrayminus=minVals
+					array=c1pMax,
+					arrayminus=c1pMin,
+					color="gray",
+					thickness=2,
+					width=5,
 				),
 				name=printName,
 				hoverlabel=dict(namelength=-1),
-				text=cWOPText,
+				text=p1cText,
 				marker_pattern_shape=pattern,
 				marker=dict(color=lineColors[name]),
 			)
-			conWayOverProdData.setdefault(elementType, []).extend([trace])
+			conData1Producer.setdefault(elementType, []).extend([trace])
+
+			compKeys = [x for x in range(1,len(consNProducers)+1)]
+			trace = plotly.graph_objs.Bar(
+				x=compKeys,
+				y=consNProducers,
+				error_y=dict(
+					type="data",
+					symmetric=False,
+					array=cNpMax,
+					arrayminus=cNpMin,
+					color="gray",
+					thickness=2,
+					width=5,
+				),
+				name=printName,
+				hoverlabel=dict(namelength=-1),
+				text=pNcText,
+				marker_pattern_shape=pattern,
+				marker=dict(color=lineColors[name]),
+			)
+			conDataNProducers.setdefault(elementType, []).extend([trace])
+
+			compKeys = [x for x in range(1,len(consNHalfProducers)+1)]
+			trace = plotly.graph_objs.Bar(
+				x=compKeys,
+				y=consNHalfProducers,
+				error_y=dict(
+					type="data",
+					symmetric=False,
+					array=cNHpMax,
+					arrayminus=cNHpMin,
+					color="gray",
+					thickness=2,
+					width=5,
+				),
+				name=printName,
+				hoverlabel=dict(namelength=-1),
+				text=cNHpText,
+				marker_pattern_shape=pattern,
+				marker=dict(color=lineColors[name]),
+			)
+			conDataNHalfProducers.setdefault(elementType, []).extend([trace])
 			
 			heatmap[0] = [None] * len(heatmap[1])
+
+			if args.heatmap_compare and not greyscale:
+				zeroPct = -heatmapMin / (heatmapMax - heatmapMin)
+				def getPos(originalPct):
+					return zeroPct + (originalPct * (1 - zeroPct))
+
+				global colorscale
+				colorscale = [
+					[0.0, 'rgb(255,127,255)'],
+					[zeroPct, 'rgb(0,0,0)'],
+					[getPos(0.2), 'rgb(49,54,149)'],
+					[getPos(0.25), 'rgb(69,117,180)'],
+					[getPos(0.3), 'rgb(116,173,209)'],
+					[getPos(0.35), 'rgb(171,217,233)'],
+					[getPos(0.4), 'rgb(224,243,248)'],
+					[getPos(0.45), 'rgb(254,224,144)'],
+					[getPos(0.5), 'rgb(253,174,97)'],
+					[getPos(0.733), 'rgb(244,109,67)'],
+					[getPos(0.867), 'rgb(215,48,39)'],
+					[getPos(1.0), 'rgb(165,0,38)']
+				]
 			
 			trace = plotly.graph_objs.Heatmap(
 				z = heatmap,
@@ -649,7 +786,7 @@ def print_graphs(name, d, minVal, maxVal):
 				colorscale=colorscale,
 				zsmooth='best',
 				zmin=0,
-				zmax=allMax[type],
+				#zmax=allMax[type],
 				texttemplate="%{z:.4s}"
 			)
 			trace2 = plotly.graph_objs.Scatter(
@@ -661,11 +798,15 @@ def print_graphs(name, d, minVal, maxVal):
 					color = 'rgb(0, 0, 0)'
 				)
 			)
-			
+
+			add = ""
+			if args.heatmap_compare:
+				add = " VS " + args.heatmap_compare + " (difference in throughput)"
+
 			data = [trace, trace2]
 			layout = plotly.graph_objs.Layout(
 				title = '{}<br>min: {}op/s<br>max: {}op/s'.format(
-					printName, intWithCommas(mins[name][type]), intWithCommas(maxes[name][type])
+					printName+add, intWithCommas(heatmapMin if args.heatmap_compare else mins[name][type]), intWithCommas(heatmapMax if args.heatmap_compare else maxes[name][type])
 				),
 				xaxis = dict(
 					title = 'Producer Threads',
@@ -685,63 +826,83 @@ def print_graphs(name, d, minVal, maxVal):
 				layout = layout
 			)
 			if not compOnly:
+				add = ""
+				if args.heatmap_compare:
+					add = "_vs_" + args.heatmap_compare.replace("::", "-").replace("<64>", "")
 				plotly.offline.plot(
 					fig,
-					filename = os.path.join(dir, printName.replace("::", "-") + "_" + get_name(type) + '_heatmap.html'),
-					image='png', image_filename=printName.replace("::", "-") + "_" + elementType + '_heatmap', image_height=imageHeight, image_width=imageWidth
+					filename = os.path.join(dir, printName.replace("::", "-").replace("<64>", "") + "_" + get_name(type).replace("+", "_") + add + '_heatmap.html'),
+					image='png', image_filename=printName.replace("::", "-").replace("<64>", "") + "_" + elementType + add + '_heatmap', image_height=imageHeight, image_width=imageWidth
 				)
 				#time.sleep(5)
+				if not args.heatmap_compare:
+					def plot(keys, vals, texts, title, axisTitle, fileName):
 
-				def plot(keys, vals, texts, title, axisTitle, fileName):
+						trace = plotly.graph_objs.Scatter(
+							x=keys,
+							y=vals,
+							text=texts,
+							name=printName,
+							mode='lines+markers',
+							hoverlabel=dict(namelength=-1)
+						)
 
-					trace = plotly.graph_objs.Scatter(
-						x=keys,
-						y=vals,
-						text=texts,
-						name=printName,
-						mode='lines+markers',
-						hoverlabel=dict(namelength=-1)
-					)
+						layout = plotly.graph_objs.Layout(
+							title=title,
+							xaxis=dict(
+								title=axisTitle,
+								tickformat=',d'
+							),
+							yaxis=dict(
+								title='Throughput (ops/s)',
+							),
+							# annotations=annotations,
+							# barmode = 'group',
+							barcornerradius=15,
+							# legend=legendAttrs,
+							# titlefont = titleAttrs
+						)
+						fig = plotly.graph_objs.Figure(
+							data=[trace],
+							layout=layout
+						)
+						plotly.offline.plot(
+							fig,
+							filename=os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-").replace("<64>", ""), fileName, elementType)),
+							image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-").replace("<64>", ""), fileName, elementType), image_height=imageHeight,
+							image_width=imageWidth
+						)
 
-					layout = plotly.graph_objs.Layout(
-						title=title,
-						xaxis=dict(
-							title=axisTitle,
-							tickformat=',d'
-						),
-						yaxis=dict(
-							title='Throughput (ops/s)',
-						),
-						# annotations=annotations,
-						# barmode = 'group',
-						barcornerradius=15,
-						# legend=legendAttrs,
-						# titlefont = titleAttrs
-					)
-					fig = plotly.graph_objs.Figure(
-						data=[trace],
-						layout=layout
-					)
-					plotly.offline.plot(
-						fig,
-						filename=os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-"), fileName, elementType)),
-						image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-"), fileName, elementType), image_height=imageHeight,
-						image_width=imageWidth
-					)
+					compKeys = [x * 2 for x in range(1, len(symmetrics) + 1)]
+					plot(compKeys, symmetrics, symText, "Concurrent Throughput (Symmetrical Threads) ({} <{}>)".format(printName, elementType), "Threads (1/2 consumer, 1/2 producer)", "symmetric")
+					compKeys = [x for x in range(1,len(prods1Consumer)+1)]
+					plot(compKeys, prods1Consumer, p1cText, "Throughput By Producer Count (1 Consumer) ({} <{}>)".format(printName, elementType), "Producer Threads", "prods1consumer")
+					compKeys = [x for x in range(1,len(prodsNConsumers)+1)]
+					plot(compKeys, prodsNConsumers, pNcText, "Throughput By Producer Count ({} Consumers) ({} <{}>)".format(N, printName, elementType), "Producer Threads", "prodsNconsumers")
+					compKeys = [x for x in range(1,len(prodsNHalfConsumers)+1)]
+					plot(compKeys, prodsNHalfConsumers, pNHcText, "Throughput By Producer Count ({} Consumers) ({} <{}>)".format(N/2, printName, elementType), "Producer Threads", "prodsNHalfconsumers")
+					compKeys = [x for x in range(1,len(cons1Producer)+1)]
+					plot(compKeys, cons1Producer, c1pText, "Throughput By Consumer Count (1 Producer) ({} <{}>)".format(printName, elementType), "Consumer Threads", "cons1producer")
+					compKeys = [x for x in range(1,len(consNProducers)+1)]
+					plot(compKeys, consNProducers, cNpText, "Throughput By Consumer Count ({} Producers) ({} <{}>)".format(N, printName, elementType), "Consumer Threads", "consNproducers")
+					compKeys = [x for x in range(1,len(consNHalfProducers)+1)]
+					plot(compKeys, consNHalfProducers, cNHpText, "Throughput By Consumer Count ({} Producers) ({} <{}>)".format(N/2, printName, elementType), "Consumer Threads", "consNHalfproducers")
 
-				compKeys = [x * 2 for x in range(1, len(symmetrics) + 1)]
-				plot(compKeys, symmetrics, symText, "Concurrent Throughput (Symmetrical Threads) ({} <{}>)".format(printName, elementType), "Threads (1/2 consumer, 1/2 producer)", "symmetric")
-				compKeys = [x * 3 for x in range(1, len(prodOverCons) + 1)]
-				plot(compKeys, prodOverCons, pOCText, "Concurrent Throughput (Producer Heavy) ({} <{}>)".format(printName, elementType), "Threads (1/3 consumer, 2/3 producer)", "prod_heavy")
-				compKeys = [x * 3 for x in range(1, len(conOverProds) + 1)]
-				plot(compKeys, conOverProds, cOPText, "Concurrent Throughput (Consumer Heavy) ({} <{}>)".format(printName, elementType), "Threads (2/3 consumer, 1/3 producer)", "con_heavy")
-				compKeys = [x * 4 for x in range(1, len(prodWayOverCons) + 1)]
-				plot(compKeys, prodWayOverCons, pWOCText, "Concurrent Throughput (Very Producer Heavy) ({} <{}>)".format(printName, elementType), "Threads (1/4 consumer, 3/4 producer)", "very_prod_heavy")
-				compKeys = [x * 4 for x in range(1, len(conWayOverProds) + 1)]
-				plot(compKeys, conWayOverProds, cWOPText, "Concurrent Throughput (Very Consumer Heavy) ({} <{}>)".format(printName, elementType), "Threads (3/4 consumer, 1/4 producer)", "very_con_heavy")
-			
+if args.heatmap_compare:
+	for key, value in data.items():
+		print_graphs(key, value, mins[key], maxes[key], True)
+	if compareHeatmap is None:
+		print("Invalid comparison. Choices are:")
+		for key, value in data.items():
+			printName = getPrintName(key)
+			print("    " + printName)
+		sys.exit(1)
+
 for key, value in data.items():
 	print_graphs(key, value, mins[key], maxes[key])
+
+if args.heatmap_compare:
+	sys.exit(0)
 
 for type in types:
 	if type not in symmetricData:
@@ -768,63 +929,64 @@ for type in types:
 			color='#000000'
 		)
 	)]
-		
 	typeName = '<span style="color: {};">{}</span>'.format(typeColor, type)
-	layout = plotly.graph_objs.Layout(
-		title = 'Raw Enqueue Throughput Comparison ({})'.format(typeName),
-		xaxis = dict(
-			title = 'Producer Threads',
-			tickformat = ',d'
-		),
-		yaxis = dict(
-			title = 'Throughput (op/sec)',
-			#range = [0,int(allMax["enqueue"]*1.05)],
-		),
-		annotations=annotations,
-		legend=legendAttrs,
-		barmode = 'group',
-		bargroupgap = 0.1,
-		barcornerradius=15,
-		#titlefont = titleAttrs
-	)
-	fig = plotly.graph_objs.Figure(
-		data = enqueueData[type],
-		layout = layout
-	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'Enqueue_{}.html'.format(type)),
-		image='png', image_filename='enqueue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
 
-	#time.sleep(5)
+	if type in enqueueData:
+		layout = plotly.graph_objs.Layout(
+			title = 'Raw Enqueue Throughput Comparison ({})'.format(typeName),
+			xaxis = dict(
+				title = 'Producer Threads',
+				tickformat = ',d'
+			),
+			yaxis = dict(
+				title = 'Throughput (op/sec)',
+				#range = [0,int(allMax["enqueue"]*1.05)],
+			),
+			annotations=annotations,
+			legend=legendAttrs,
+			barmode = 'group',
+			bargroupgap = 0.1,
+			barcornerradius=15,
+			#titlefont = titleAttrs
+		)
+		fig = plotly.graph_objs.Figure(
+			data = enqueueData[type],
+			layout = layout
+		)
+		plotly.offline.plot(
+			fig,
+			filename = os.path.join(dir, 'Enqueue_{}.html'.format(type)),
+			image='png', image_filename='enqueue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		)
 
-	layout = plotly.graph_objs.Layout(
-		title = 'Raw Dequeue Throughput Comparison ({})'.format(typeName),
-		xaxis = dict(
-			title = 'Consumer Threads',
-			tickformat = ',d'
-		),
-		yaxis = dict(
-			title = 'Throughput (op/sec)',
-			#range = [0,int(allMax["dequeue"]*1.05)]
-		),
-		annotations=annotations,
-		legend=legendAttrs,
-		barmode = 'group',
-		bargroupgap = 0.1,
-		barcornerradius=15,
-		#titlefont = titleAttrs
-	)
-	fig = plotly.graph_objs.Figure(
-		data = dequeueData[type],
-		layout = layout
-	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'Dequeue_{}.html'.format(type)),
-		image='png', image_filename='dequeue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+		#time.sleep(5)
+
+		layout = plotly.graph_objs.Layout(
+			title = 'Raw Dequeue Throughput Comparison ({})'.format(typeName),
+			xaxis = dict(
+				title = 'Consumer Threads',
+				tickformat = ',d'
+			),
+			yaxis = dict(
+				title = 'Throughput (op/sec)',
+				#range = [0,int(allMax["dequeue"]*1.05)]
+			),
+			annotations=annotations,
+			legend=legendAttrs,
+			barmode = 'group',
+			bargroupgap = 0.1,
+			barcornerradius=15,
+			#titlefont = titleAttrs
+		)
+		fig = plotly.graph_objs.Figure(
+			data = dequeueData[type],
+			layout = layout
+		)
+		plotly.offline.plot(
+			fig,
+			filename = os.path.join(dir, 'Dequeue_{}.html'.format(type)),
+			image='png', image_filename='dequeue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		)
 
 	#time.sleep(5)
 
@@ -890,9 +1052,9 @@ for type in types:
 	#time.sleep(5)
 
 	layout = plotly.graph_objs.Layout(
-		title = 'Concurrent Throughput (Producer Heavy) Comparison ({})'.format(typeName),
+		title = 'Throughput By Producer Count (1 Consumer) Comparison ({})'.format(typeName),
 		xaxis = dict(
-			title = 'Threads (1/3 consumer, 2/3 producer)',
+			title = 'Producer Threads',
 			tickformat = ',d'
 		),
 		yaxis = dict(
@@ -907,26 +1069,24 @@ for type in types:
 		#titlefont = titleAttrs
 	)
 	fig = plotly.graph_objs.Figure(
-		data = prodOverConData[type],
+		data = prodData1Consumer[type],
 		layout = layout
 	)
 	plotly.offline.plot(
 		fig,
-		filename = os.path.join(dir, 'prod_heavy_{}.html'.format(type)),
-		image='png', image_filename='prod_heavy_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		filename = os.path.join(dir, 'prods1consumer_{}.html'.format(type)),
+		image='png', image_filename='prods1consumer_{}'.format(type), image_height=imageHeight, image_width=imageWidth
 	)
-    
-	#time.sleep(5)
-    
+
 	layout = plotly.graph_objs.Layout(
-		title = 'Concurrent Throughput (Consumer Heavy) Comparison ({})'.format(typeName),
+		title = 'Throughput By Producer Count ({} Consumers) Comparison ({})'.format(N, typeName),
 		xaxis = dict(
-			title = 'Threads (2/3 consumer, 1/3 producer)',
+			title = 'Producer Threads',
 			tickformat = ',d'
 		),
 		yaxis = dict(
 			title = 'Throughput (op/sec)',
-			#range = [0,int(allMax["enq+deq"]*1.05)]
+			#range = [0,int(allMax['enq+deq']*1.05)]
 		),
 		annotations=annotations,
 		legend=legendAttrs,
@@ -936,26 +1096,24 @@ for type in types:
 		#titlefont = titleAttrs
 	)
 	fig = plotly.graph_objs.Figure(
-		data = conOverProdData[type],
+		data = prodDataNConsumers[type],
 		layout = layout
 	)
 	plotly.offline.plot(
 		fig,
-		filename = os.path.join(dir, 'con_heavy_{}.html'.format(type)),
-		image='png', image_filename='con_heavy_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		filename = os.path.join(dir, 'prodsNconsumers_{}.html'.format(type)),
+		image='png', image_filename='prodsNconsumers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
 	)
-    
-	#time.sleep(5)
-    
+
 	layout = plotly.graph_objs.Layout(
-		title = 'Concurrent Throughput (Very Producer Heavy) Comparison ({})'.format(typeName),
+		title = 'Throughput By Producer Count ({} Consumers) Comparison ({})'.format(N/2, typeName),
 		xaxis = dict(
-			title = 'Threads (1/4 consumer, 3/4 producer)',
+			title = 'Producer Threads',
 			tickformat = ',d'
 		),
 		yaxis = dict(
 			title = 'Throughput (op/sec)',
-			#range = [0,int(allMax["enq+deq"]*1.05)]
+			#range = [0,int(allMax['enq+deq']*1.05)]
 		),
 		annotations=annotations,
 		legend=legendAttrs,
@@ -965,26 +1123,25 @@ for type in types:
 		#titlefont = titleAttrs
 	)
 	fig = plotly.graph_objs.Figure(
-		data = prodWayOverConData[type],
+		data = prodDataNHalfConsumers[type],
 		layout = layout
 	)
 	plotly.offline.plot(
 		fig,
-		filename = os.path.join(dir, 'very_prod_heavy_{}.html'.format(type)),
-		image='png', image_filename='very_prod_heavy_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		filename = os.path.join(dir, 'prodsNHalfconsumers_{}.html'.format(type)),
+		image='png', image_filename='prodsNHalfconsumers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
 	)
-    
-	#time.sleep(5)
-    
+
+
 	layout = plotly.graph_objs.Layout(
-		title = 'Concurrent Throughput (Very Consumer Heavy) Comparison ({})'.format(typeName),
+		title = 'Throughput By Consumer Count (1 Producer) Comparison ({})'.format(typeName),
 		xaxis = dict(
-			title = 'Threads (3/4 consumer, 1/4 producer)',
+			title = 'Consumer Threads',
 			tickformat = ',d'
 		),
 		yaxis = dict(
 			title = 'Throughput (op/sec)',
-			#range = [0,int(allMax["enq+deq"]*1.05)]
+			#range = [0,int(allMax['enq+deq']*1.05)]
 		),
 		annotations=annotations,
 		legend=legendAttrs,
@@ -994,13 +1151,67 @@ for type in types:
 		#titlefont = titleAttrs
 	)
 	fig = plotly.graph_objs.Figure(
-		data = conWayOverProdData[type],
+		data = conData1Producer[type],
 		layout = layout
 	)
 	plotly.offline.plot(
 		fig,
-		filename = os.path.join(dir, 'very_con_heavy_{}.html'.format(type)),
-		image='png', image_filename='very_con_heavy_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		filename = os.path.join(dir, 'cons1producer_{}.html'.format(type)),
+		image='png', image_filename='cons1producer_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	)
+
+	layout = plotly.graph_objs.Layout(
+		title = 'Throughput By Consumer Count ({} Producers) Comparison ({})'.format(N, typeName),
+		xaxis = dict(
+			title = 'Consumer Threads',
+			tickformat = ',d'
+		),
+		yaxis = dict(
+			title = 'Throughput (op/sec)',
+			#range = [0,int(allMax['enq+deq']*1.05)]
+		),
+		annotations=annotations,
+		legend=legendAttrs,
+		barmode = 'group',
+		bargroupgap = 0.1,
+		barcornerradius=15,
+		#titlefont = titleAttrs
+	)
+	fig = plotly.graph_objs.Figure(
+		data = conDataNProducers[type],
+		layout = layout
+	)
+	plotly.offline.plot(
+		fig,
+		filename = os.path.join(dir, 'consNproducers_{}.html'.format(type)),
+		image='png', image_filename='consNproducers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	)
+
+	layout = plotly.graph_objs.Layout(
+		title = 'Throughput By Consumer Count ({} Producers) Comparison ({})'.format(N/2, typeName),
+		xaxis = dict(
+			title = 'Consumer Threads',
+			tickformat = ',d'
+		),
+		yaxis = dict(
+			title = 'Throughput (op/sec)',
+			#range = [0,int(allMax['enq+deq']*1.05)]
+		),
+		annotations=annotations,
+		legend=legendAttrs,
+		barmode = 'group',
+		bargroupgap = 0.1,
+		barcornerradius=15,
+		#titlefont = titleAttrs
+	)
+	fig = plotly.graph_objs.Figure(
+		data = conDataNHalfProducers[type],
+		layout = layout
+	)
+	plotly.offline.plot(
+		fig,
+		filename = os.path.join(dir, 'consNHalfproducers_{}.html'.format(type)),
+		image='png', image_filename='consNHalfproducers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
 	)
 
 	colors = []
@@ -1014,7 +1225,10 @@ for type in types:
 			type="data",
 			symmetric=False,
 			array=latencyMax[type],
-			arrayminus=latencyMin[type]
+			arrayminus=latencyMin[type],
+			color="gray",
+			thickness=2,
+			width=5,
 		),
 		hoverlabel=dict(namelength=-1),
 		text=latencyTxt[type],

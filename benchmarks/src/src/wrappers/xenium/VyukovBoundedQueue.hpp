@@ -1,7 +1,7 @@
 #pragma once
 
 #include <xenium/vyukov_bounded_queue.hpp>
-#include "../../../../../include/BEAST/ConcurrentQueue.hpp"
+#include "../../../../../include/QAC/ConcurrentQueue.hpp"
 #include "../../QueueWrapper.hpp"
 #include <thread>
 
@@ -12,7 +12,7 @@ class QueueWrapper<xenium::vyukov_bounded_queue<t_ElementType, xenium::policy::r
 {
 public:
 	QueueWrapper()
-		: m_queue(BEAST::detail::nextPowerOf2(benchmarkConfig::numElements<t_ElementType>::valueSingle))
+		: m_queue(QAC::detail::nextPowerOf2(benchmarkConfig::numElements<t_ElementType>::valueSingle))
 	{
 	}
 

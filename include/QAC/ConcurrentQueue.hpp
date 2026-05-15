@@ -1,7 +1,7 @@
 /*
  * MIT License
  *
- * Copyright (c) 2016 Jaedyn Kitt Draper
+ * Copyright (c) 2016-2026 Kitty Draper
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,8 +23,7 @@
  */
 
 /*
- * Reference implementation and public library in C++ for the
- * Batch-Enabled Atomic Scalable Ticketed (BEAST) Concurrent Queue
+ * Reference implementation and public library in C++ for the Quick And Curious Concurrent Queue
  */
 
 #pragma once
@@ -43,20 +42,20 @@
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
-#    define BEAST_FORCE_NO_INLINE __declspec(noinline)
-#    define BEAST_FORCE_INLINE __forceinline
+#    define QAC_FORCE_NO_INLINE __declspec(noinline)
+#    define QAC_FORCE_INLINE __forceinline
 #elif defined(__INTEL_COMPILER_BUILD_DATE) || defined(__clang__) || defined(__GNUC__)
-#    define BEAST_FORCE_NO_INLINE __attribute__((noinline))
-#    define BEAST_FORCE_INLINE __attribute__((always_inline)) inline
+#    define QAC_FORCE_NO_INLINE __attribute__((noinline))
+#    define QAC_FORCE_INLINE __attribute__((always_inline)) inline
 #endif
 
-#ifndef BEAST_CACHELINE_SIZE
-#    define BEAST_CACHELINE_SIZE 128
+#ifndef QAC_CACHELINE_SIZE
+#    define QAC_CACHELINE_SIZE 128
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_acle.h>
-BEAST_FORCE_INLINE void BEAST_YIELD()
+QAC_FORCE_INLINE void QAC_YIELD()
 {
 #ifdef _WIN32
 	__dmb(_ARM_BARRIER_ISHST);
@@ -68,29 +67,29 @@ BEAST_FORCE_INLINE void BEAST_YIELD()
 }
 #else
 #	include <immintrin.h>
-#	define BEAST_YIELD _mm_pause
+#	define QAC_YIELD _mm_pause
 #endif
 
-#define BEAST_CONCAT_2(left, right) left##right
-#define BEAST_CONCAT(left, right) BEAST_CONCAT_2(left, right)
+#define QAC_CONCAT_2(left, right) left##right
+#define QAC_CONCAT(left, right) QAC_CONCAT_2(left, right)
 
-#define BEAST_ABORT_MSG_F(msg, ...)       \
+#define QAC_ABORT_MSG_F(msg, ...)       \
     fprintf(stderr, msg, ##__VA_ARGS__); \
     fputs("\n", stderr);                 \
     fflush(stderr);                      \
     std::terminate();
 
-#ifndef BEAST_CONCURRENT_QUEUE_DEBUG_ASSERTS
-#    define BEAST_CONCURRENT_QUEUE_DEBUG_ASSERTS 0
+#ifndef QAC_CONCURRENT_QUEUE_DEBUG_ASSERTS
+#    define QAC_CONCURRENT_QUEUE_DEBUG_ASSERTS 0
 #endif
 
-#if BEAST_CONCURRENT_QUEUE_DEBUG_ASSERTS
-#    define BEAST_CONCURRENT_QUEUE_ASSERT(val)               \
+#if QAC_CONCURRENT_QUEUE_DEBUG_ASSERTS
+#    define QAC_CONCURRENT_QUEUE_ASSERT(val)               \
         if (!(val)) {                                       \
-            BEAST_ABORT_MSG_F("Assertion failed: %s", #val); \
+            QAC_ABORT_MSG_F("Assertion failed: %s", #val); \
         }
 #else
-#    define BEAST_CONCURRENT_QUEUE_ASSERT(val)
+#    define QAC_CONCURRENT_QUEUE_ASSERT(val)
 #endif
 
 #if 1
@@ -98,20 +97,20 @@ BEAST_FORCE_INLINE void BEAST_YIELD()
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#define BEAST_DEBUG(msg, ...) printf("[TID %d] " msg "\n", GetCurrentThreadId(), __VA_ARGS__)
+#define QAC_DEBUG(msg, ...) printf("[TID %d] " msg "\n", GetCurrentThreadId(), __VA_ARGS__)
 #else
 #include <pthread.h>
-#define BEAST_DEBUG(msg, ...) printf("[TID %zd] " msg "\n", pthread_self(), __VA_ARGS__)
+#define QAC_DEBUG(msg, ...) printf("[TID %zd] " msg "\n", pthread_self(), __VA_ARGS__)
 #endif
 #else
-#define BEAST_DEBUG(...)
+#define QAC_DEBUG(...)
 #endif
 
-#ifndef BEAST_DEFAULT_SPIN_COUNT
-#	define BEAST_DEFAULT_SPIN_COUNT 1000
+#ifndef QAC_DEFAULT_SPIN_COUNT
+#	define QAC_DEFAULT_SPIN_COUNT 1000
 #endif
 
-namespace BEAST
+namespace QAC
 {
 #if defined(_WIN32)
 	using ssize_t = SSIZE_T;
@@ -224,11 +223,11 @@ namespace BEAST
 	template <typename t_ElementType, size_t t_QueueSize = 131072, template<typename> typename t_AllocatorType = std::allocator>
 	using BatchableIdleSleepingConcurrentBoundedQueue = ConcurrentBoundedQueue<t_ElementType, t_QueueSize, true, true, t_AllocatorType>;
 
-}  // namespace BEAST
+}  // namespace QAC
 
 
 template<typename t_ElementType, bool t_WithSemaphore>
-struct BEAST::detail::BufferElementImpl
+struct QAC::detail::BufferElementImpl
 {
 	typedef std::binary_semaphore* NotifierType;
 
@@ -240,7 +239,7 @@ struct BEAST::detail::BufferElementImpl
 };
 
 template<typename t_ElementType>
-struct BEAST::detail::BufferElementImpl<t_ElementType, false>
+struct QAC::detail::BufferElementImpl<t_ElementType, false>
 {
 	typedef bool NotifierType;
 
@@ -252,7 +251,7 @@ struct BEAST::detail::BufferElementImpl<t_ElementType, false>
 };
 
 template<typename t_ElementType, bool t_WithSemaphore>
-struct BEAST::detail::BoundedBufferElementImpl
+struct QAC::detail::BoundedBufferElementImpl
 {
 	static constexpr intptr_t READY_SENTINEL = 1;
 
@@ -262,14 +261,14 @@ struct BEAST::detail::BoundedBufferElementImpl
 };
 
 template<typename t_ElementType>
-struct BEAST::detail::BoundedBufferElementImpl<t_ElementType, false>
+struct QAC::detail::BoundedBufferElementImpl<t_ElementType, false>
 {
 	std::atomic<int64_t> generation{ 0 };
 	t_ElementType item;
 };
 
 /**
- * @class   BEAST::detail::Buffer
+ * @class   QAC::detail::Buffer
  *
  * @brief   Simple buffer class representing a single allocated block within an unbounded concurrent queue.
  *
@@ -278,11 +277,11 @@ struct BEAST::detail::BoundedBufferElementImpl<t_ElementType, false>
  *          contained within this class.
  */
 template <typename t_ElementType, size_t t_BlockSize, bool t_EnableIdleSleep>
-class alignas(BEAST_CACHELINE_SIZE) BEAST::detail::Buffer
+class alignas(QAC_CACHELINE_SIZE) QAC::detail::Buffer
 {
 public:
 
-	using BufferElement = BEAST::detail::BufferElementImpl<t_ElementType, t_EnableIdleSleep>;
+	using BufferElement = QAC::detail::BufferElementImpl<t_ElementType, t_EnableIdleSleep>;
 
 	Buffer()
 		: m_next(nullptr),
@@ -488,29 +487,29 @@ public:
 	}
 
 private:
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_next;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_refCount;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<BufferElement*> m_readPos;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<BufferElement*> m_writePos;
-	alignas(BEAST_CACHELINE_SIZE) int64_t m_generation{ 0 };
+	alignas(QAC_CACHELINE_SIZE) std::atomic<Buffer*> m_next;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_refCount;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<BufferElement*> m_readPos;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<BufferElement*> m_writePos;
+	alignas(QAC_CACHELINE_SIZE) int64_t m_generation{ 0 };
 
 	char m_buffer[t_BlockSize * sizeof(BufferElement)];
 	BufferElement const* const m_end;
 };
 
 /**
- * @class   BEAST::ReadReservationTicket
+ * @class   QAC::ReadReservationTicket
  *
  * @brief   Represents a reservation to read an element that hasn't been written to yet.
  *
  * @warning You must call queue.InitializeReservationTicket() on this before using it!
  */
 template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
-struct BEAST::ReadReservationTicket
+struct QAC::ReadReservationTicket
 {
 	detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>* buffer{ nullptr };
 	typename detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>::BufferElement* ptr{ nullptr };
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>* queue{ nullptr };
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>* queue{ nullptr };
 
 	ReadReservationTicket()
 	{}
@@ -538,7 +537,7 @@ struct BEAST::ReadReservationTicket
 };
 
 template <typename t_ElementType, template<typename> typename t_AllocatorType>
-class alignas(BEAST_CACHELINE_SIZE) BEAST::detail::ReservationTicketSubQueue
+class alignas(QAC_CACHELINE_SIZE) QAC::detail::ReservationTicketSubQueue
 {
 private:
 	enum class State
@@ -637,13 +636,13 @@ private:
 
 	t_AllocatorType<Element> m_allocator;
 
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<int> m_count{ 0 };
-	alignas(BEAST_CACHELINE_SIZE) size_t const m_capacity;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<int> m_count{ 0 };
+	alignas(QAC_CACHELINE_SIZE) size_t const m_capacity;
 	Element* m_buffer;
 };
 
 /**
- * class    BEAST::ConcurrentQueue
+ * class    QAC::ConcurrentQueue
  *
  * @brief   Concurrent queue, supporting multi-consumer, multi-producer access
  *          from multiple threads with no synchronization required. Unbounded, capable of
@@ -686,13 +685,13 @@ private:
  *                              be allocated after failed reads, and deallocated on subsequent successful reads.
  */
 template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
-class alignas(BEAST_CACHELINE_SIZE) BEAST::ConcurrentQueue
+class alignas(QAC_CACHELINE_SIZE) QAC::ConcurrentQueue
 {
 public:
-	using ReadReservationTicket = BEAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
-	using Buffer = BEAST::detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>;
+	using ReadReservationTicket = QAC::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
+	using Buffer = QAC::detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>;
 
-	friend struct BEAST::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
+	friend struct QAC::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
 
 protected:
 	/**
@@ -707,7 +706,7 @@ protected:
 		{
 			while(m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
 			{
-				BEAST_YIELD();
+				QAC_YIELD();
 			}
 			swapToEnd_(buffer);
 			m_reallocatingBuffer.store(false);
@@ -729,10 +728,10 @@ protected:
 	{
 		Buffer* tail = m_tail.load(std::memory_order_acquire);
 		buffer->Clear();
-		BEAST_CONCURRENT_QUEUE_ASSERT(tail->GetNext() == nullptr);
-		BEAST_CONCURRENT_QUEUE_ASSERT(buffer != m_writeBuffer.load());
-		BEAST_CONCURRENT_QUEUE_ASSERT(buffer != m_readBuffer.load());
-		BEAST_CONCURRENT_QUEUE_ASSERT(buffer != tail);
+		QAC_CONCURRENT_QUEUE_ASSERT(tail->GetNext() == nullptr);
+		QAC_CONCURRENT_QUEUE_ASSERT(buffer != m_writeBuffer.load());
+		QAC_CONCURRENT_QUEUE_ASSERT(buffer != m_readBuffer.load());
+		QAC_CONCURRENT_QUEUE_ASSERT(buffer != tail);
 		buffer->SetGeneration(tail->GetGeneration() + 1);
 		tail->SetNext(buffer);
 		buffer->SetNext(nullptr);
@@ -781,7 +780,7 @@ protected:
 	 *          keeps the code for the COMMON case small, and the cost of a function call for the uncommon case
 	 *          is largely irrelevant.
 	 */
-	BEAST_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t batchCount)
+	QAC_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t batchCount)
 	{
 		// Just because we won the lottery, though, doesn't mean we're the only ones who won.
 		// Someone else may have already claimed the prize. We need to make sure we still
@@ -808,7 +807,7 @@ protected:
 					m_tail.store(newBuffer, std::memory_order_release);
 				}
 			}
-			BEAST_CONCURRENT_QUEUE_ASSERT(newBuffer != buffer);
+			QAC_CONCURRENT_QUEUE_ASSERT(newBuffer != buffer);
 			// Once we've either obtained or allocated the new buffer, we need to make sure
 			// the write position's set to the start of the queue, otherwise we'll just
 			// end up throwing it away again.
@@ -837,7 +836,7 @@ protected:
 	 *          keeps the code for the COMMON case small, and the cost of a function call for the uncommon case
 	 *          is largely irrelevant.
 	 */
-	BEAST_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ReadReservationTicket& ticket)
+	QAC_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ReadReservationTicket& ticket)
 	{
 		buffer = m_readBuffer.load(std::memory_order_acquire);
 		element = buffer->GetForRead();
@@ -855,7 +854,7 @@ protected:
 				return false;
 			}
 			nextBuffer->SetReadPosition();
-			BEAST_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
+			QAC_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
 
 			m_readBuffer.store(nextBuffer, std::memory_order_release);
 			consumeUnlocked_(buffer);
@@ -867,7 +866,7 @@ protected:
 		return true;
 	}
 
-	BEAST_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t count)
+	QAC_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t count)
 	{
 		buffer = m_readBuffer.load(std::memory_order_acquire);
 		element = buffer->GetBatchForRead(count);
@@ -885,7 +884,7 @@ protected:
 				return false;
 			}
 			nextBuffer->SetReadPosition();
-			BEAST_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
+			QAC_CONCURRENT_QUEUE_ASSERT(nextBuffer != buffer);
 
 			m_readBuffer.store(nextBuffer, std::memory_order_release);
 			consumeUnlocked_(buffer);
@@ -928,7 +927,7 @@ protected:
 			}
 			else
 			{
-				BEAST_YIELD();
+				QAC_YIELD();
 			}
 		}
 
@@ -990,7 +989,7 @@ public:
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(val);
-		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
+		QAC_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
 		if constexpr (t_EnableIdleSleep)
 		{
 			auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
@@ -1018,7 +1017,7 @@ public:
 	{
 		typename Buffer::BufferElement& element = getNextElement_();
 		new (&element.item) t_ElementType(std::move(val));
-		BEAST_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
+		QAC_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
 		if constexpr (t_EnableIdleSleep)
 		{
 			auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
@@ -1080,7 +1079,7 @@ public:
 					}
 					else
 					{
-						BEAST_YIELD();
+						QAC_YIELD();
 					}
 				}
 				new (&element->item) t_ElementType(vals[i]);
@@ -1120,9 +1119,9 @@ public:
 	 *          ticket - with the receipt, to continue the backorder metaphor - in order to read it. It will not be given
 	 *          to another customer, no matter what!
 	 *
-	 *          The reason for this is that, to achieve its speed, BEASTQueue pops items *optimistically*, assuming something
+	 *          The reason for this is that, to achieve its speed, QACQueue pops items *optimistically*, assuming something
 	 *          is ready to read when you attempt to read it. It increments the read head based on this assumption. This
-	 *          allows BEASTQueue to avoid complex compare-and-swap operations and keep its common-case operation to a single
+	 *          allows QACQueue to avoid complex compare-and-swap operations and keep its common-case operation to a single
 	 *          atomic increment per push or pop. The downside, though, is when it's incorrect on its optimistic pop,
 	 *          it cannot safely correct - it can't simply decrement the read head because a race condition exists where thread
 	 *          A attempts to read index 0, to find it not yet written, then thread B pushes indexes 0 and 1, and then thread
@@ -1210,7 +1209,7 @@ public:
 				}
 				else
 				{
-					BEAST_YIELD();
+					QAC_YIELD();
 				}
 			}
 		}
@@ -1234,7 +1233,7 @@ public:
 			// Then we can return true - success!
 			val = std::move(element->item);
 			element->item.~t_ElementType();
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
+			QAC_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 			// Surprisingly, even though the ability exists to store a local count on the ticket
 			// and consume it as a single operation only when switching buffers, in practice, in
@@ -1252,7 +1251,7 @@ public:
 		return false;
 	}
 
-	void PopWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	void PopWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = QAC_DEFAULT_SPIN_COUNT)
 	{
 		ReadReservationTicket ticket;
 		InitializeReservationTicket(ticket);
@@ -1266,7 +1265,7 @@ public:
 		size_t spins = 0;
 		while (ticket.ptr->notifier.load(std::memory_order_acquire) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) [[unlikely]]
 		{
-			BEAST_YIELD();
+			QAC_YIELD();
 			if constexpr (t_EnableIdleSleep)
 			{
 				if (++spins > maxSpinsBeforeSemaphoreWait)
@@ -1283,7 +1282,7 @@ public:
 		}
 		val = std::move(ticket.ptr->item);
 		ticket.ptr->item.~t_ElementType();
-		BEAST_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
+		QAC_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 		consume_(ticket.buffer, 1);
 		return;
@@ -1412,7 +1411,7 @@ public:
 							m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
 							break;
 						}
-						BEAST_YIELD();
+						QAC_YIELD();
 					}
 				}
 			}
@@ -1430,7 +1429,7 @@ public:
 			return true;
 		}
 
-		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = QAC_DEFAULT_SPIN_COUNT)
 		{
 			if (m_primed) [[unlikely]]
 			{
@@ -1465,7 +1464,7 @@ public:
 							m_queue->m_reallocatingBuffer.store(false, std::memory_order_release);
 							break;
 						}
-						BEAST_YIELD();
+						QAC_YIELD();
 					}
 				}
 			}
@@ -1473,7 +1472,7 @@ public:
 			size_t spins = 0;
 			while (m_element->notifier.load(std::memory_order_acquire) != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
 			{
-				BEAST_YIELD();
+				QAC_YIELD();
 				if constexpr (t_EnableIdleSleep)
 				{
 					if (++spins > maxSpinsBeforeSemaphoreWait)
@@ -1577,7 +1576,7 @@ public:
 	 *        magnitude greater performance than either Pop option.
 	 *
 	 * @details In contrast with the other two Pop() options, PopBatch() takes advantage of the contiguous storage
-	 *          structure of BEASTQueue to reduce contention by allowing the retrieval of multiple items from the queue with
+	 *          structure of QACQueue to reduce contention by allowing the retrieval of multiple items from the queue with
 	 *          only a single atomic increment. A second atomic operation is used to keep track of how many elements it's allowed
 	 *          to read to ensure it doesn't over-consume the queue. When it does, a third atomic operation is used to correct.
 	 *
@@ -1660,7 +1659,7 @@ public:
 		}
 	}
 
-	void PopBatchWait(BatchPopList& result, ssize_t maxCount, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	void PopBatchWait(BatchPopList& result, ssize_t maxCount, size_t maxSpinsBeforeSemaphoreWait = QAC_DEFAULT_SPIN_COUNT)
 	{
 		if constexpr (!t_EnableBatch)
 		{
@@ -1683,29 +1682,29 @@ public:
 protected:
 	// Cacheline padding prevents false sharing.
 	// Read head, not necessarily the same as the write head
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_readBuffer;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<Buffer*> m_readBuffer;
 	// Spin lock used when swapping buffers - not technically lock free, but lock free isn't always faster.
 	// And this is used rarely enough that the simplicity of the code around it is far more valuable.
 	// The performance improvement of making this lock free would be imperceptible, and the increased amount
 	// of code to get it to work right would likely bloat code size and cause more cache misses in execution.
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<bool> m_reallocatingBuffer;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<bool> m_reallocatingBuffer;
 	// Write head, not necessarily the same as the read head
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_writeBuffer;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<Buffer*> m_writeBuffer;
 	// Tail. Obviously.
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<Buffer*> m_tail;
-	alignas(BEAST_CACHELINE_SIZE) detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_subQueue;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_failedReads;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
-	alignas(BEAST_CACHELINE_SIZE) t_AllocatorType<Buffer> m_allocator;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<Buffer*> m_tail;
+	alignas(QAC_CACHELINE_SIZE) detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_subQueue;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_failedReads;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
+	alignas(QAC_CACHELINE_SIZE) t_AllocatorType<Buffer> m_allocator;
 };
 
 /**
- * @class BEAST::BoundedReadReservationTicket
+ * @class QAC::BoundedReadReservationTicket
  *
  * @brief Represents a reservation to read an element that hasn't been written to yet.
  */
 template <typename t_ElementType>
-struct BEAST::BoundedReadReservationTicket
+struct QAC::BoundedReadReservationTicket
 {
 	void* ptr{ nullptr };
 	int64_t generation{ 0 };
@@ -1734,12 +1733,12 @@ struct BEAST::BoundedReadReservationTicket
 };
 
 /**
- * @class BEAST::BoundedReadReservationTicket
+ * @class QAC::BoundedReadReservationTicket
  *
  * @brief Represents a reservation to write an element that's already holding unread data
  */
 template <typename t_ElementType>
-struct BEAST::BoundedWriteReservationTicket
+struct QAC::BoundedWriteReservationTicket
 {
 	void* ptr{ nullptr };
 	int64_t generation{ 0 };
@@ -1769,7 +1768,7 @@ struct BEAST::BoundedWriteReservationTicket
 };
 
 /**
- * @class   BEAST::ConcurrentBoundedQueue
+ * @class   QAC::ConcurrentBoundedQueue
  *
  * @brief   A bounded implementation of ConcurrentQueue.
  *
@@ -1817,13 +1816,13 @@ struct BEAST::BoundedWriteReservationTicket
  *                              that do accept ticket parameters; those are alloc-free.
  */
 template <typename t_ElementType, size_t t_QueueSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
-class alignas(BEAST_CACHELINE_SIZE) BEAST::ConcurrentBoundedQueue
+class alignas(QAC_CACHELINE_SIZE) QAC::ConcurrentBoundedQueue
 {
 public:
-	using ReadReservationTicket = BEAST::BoundedReadReservationTicket<t_ElementType>;
+	using ReadReservationTicket = QAC::BoundedReadReservationTicket<t_ElementType>;
 	using WriteReservationTicket = BoundedWriteReservationTicket<t_ElementType>;
 
-	using BufferElement = BEAST::detail::BoundedBufferElementImpl<t_ElementType, t_EnableIdleSleep>;
+	using BufferElement = QAC::detail::BoundedBufferElementImpl<t_ElementType, t_EnableIdleSleep>;
 
 	ConcurrentBoundedQueue(ssize_t maxConcurrentTicketFreeReads = 0, ssize_t maxConcurrentTicketFreeWrites = 0) 
 		: m_readIdx(0)
@@ -1884,7 +1883,7 @@ public:
 
 			// ...then we construct the new element...
 			new (&element->item) t_ElementType(val);
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+			QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 			if constexpr (t_EnableBatch)
 			{
@@ -1935,7 +1934,7 @@ public:
 			ticket.ptr = nullptr;
 
 			new (&element->item) t_ElementType(std::move(val));
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+			QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 			if constexpr (t_EnableBatch)
 			{
@@ -1974,11 +1973,11 @@ public:
 		size_t spins = 0;
 		while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 		{
-			BEAST_YIELD();
+			QAC_YIELD();
 		}
 
 		new (&element->item) t_ElementType(val);
-		BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+		QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 		if constexpr (t_EnableBatch)
 		{
@@ -2013,11 +2012,11 @@ public:
 		size_t spins = 0;
 		while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 		{
-			BEAST_YIELD();
+			QAC_YIELD();
 		}
 
 		new (&element->item) t_ElementType(std::move(val));
-		BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+		QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 		if constexpr (t_EnableBatch)
 		{
@@ -2070,13 +2069,13 @@ public:
 
 			val = std::move(element->item);
 			element->item.~t_ElementType();
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
+			QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
 			if constexpr (t_EnableIdleSleep)
 			{
 				element->notifier.store(nullptr, std::memory_order_release);
 			}
 			element->generation.store(-readGeneration, std::memory_order_release);
-			//BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
+			//QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
 			return true;
 		}
 		ticket.ptr = element;
@@ -2084,7 +2083,7 @@ public:
 		return false;
 	}
 
-	void PopWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	void PopWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = QAC_DEFAULT_SPIN_COUNT)
 	{
 		ReadReservationTicket ticket;
 		while (ticket.ptr == nullptr)
@@ -2101,7 +2100,7 @@ public:
 		size_t spins = 0;
 		while (element->generation.load(std::memory_order_acquire) != readGeneration) [[unlikely]]
 		{
-			BEAST_YIELD();
+			QAC_YIELD();
 			if constexpr (t_EnableIdleSleep)
 			{
 				if (++spins > maxSpinsBeforeSemaphoreWait)
@@ -2127,13 +2126,13 @@ public:
 
 		val = std::move(element->item);
 		element->item.~t_ElementType();
-		BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
+		QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
 		if constexpr (t_EnableIdleSleep)
 		{
 			element->notifier.store(nullptr, std::memory_order_release);
 		}
 		element->generation.store(-readGeneration, std::memory_order_release);
-		//BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
+		//QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == readGeneration);
 	}
 
 	/**
@@ -2248,7 +2247,7 @@ public:
 			return true;
 		}
 
-		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+		inline void ReadNextWait(t_ElementType& val, size_t maxSpinsBeforeSemaphoreWait = QAC_DEFAULT_SPIN_COUNT)
 		{
 			if (m_primed) [[unlikely]]
 			{
@@ -2262,7 +2261,7 @@ public:
 			size_t spins = 0;
 			while (element->generation.load(std::memory_order_acquire) != readGeneration) [[unlikely]]
 			{
-				BEAST_YIELD();
+				QAC_YIELD();
 				if constexpr (t_EnableIdleSleep)
 				{
 					if (++spins > maxSpinsBeforeSemaphoreWait)
@@ -2367,7 +2366,7 @@ public:
 			}
 
 			new (&element->item) t_ElementType(std::move(val));
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+			QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 			element->generation.store(writeGeneration, std::memory_order_release);
 
@@ -2393,7 +2392,7 @@ public:
 			}
 
 			new (&element->item) t_ElementType(val);
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+			QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 			if constexpr (t_EnableIdleSleep)
 			{
@@ -2426,11 +2425,11 @@ public:
 			size_t spins = 0;
 			while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 			{
-				BEAST_YIELD();
+				QAC_YIELD();
 			}
 
 			new (&element->item) t_ElementType(std::move(val));
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+			QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 			if constexpr (t_EnableIdleSleep)
 			{
@@ -2462,11 +2461,11 @@ public:
 			size_t spins = 0;
 			while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 			{
-				BEAST_YIELD();
+				QAC_YIELD();
 			}
 
 			new (&element->item) t_ElementType(val);
-			BEAST_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
+			QAC_CONCURRENT_QUEUE_ASSERT(element->generation.load() == -(writeGeneration - 1));
 
 			if constexpr (t_EnableIdleSleep)
 			{
@@ -2564,7 +2563,7 @@ public:
 		}
 	}
 
-	void PushBatchWait(BatchPushList& enqueueList, ssize_t count, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	void PushBatchWait(BatchPushList& enqueueList, ssize_t count, size_t maxSpinsBeforeSemaphoreWait = QAC_DEFAULT_SPIN_COUNT)
 	{
 		if constexpr (!t_EnableBatch)
 		{
@@ -2587,7 +2586,7 @@ public:
 				size_t spins = 0;
 				while (element->generation.load(std::memory_order_acquire) != -(writeGeneration - 1)) [[unlikely]]
 				{
-					BEAST_YIELD();
+					QAC_YIELD();
 				}
 
 				PushBatch(enqueueList, count - 1);
@@ -2602,7 +2601,7 @@ public:
 	 *        magnitude greater performance than either Pop option.
 	 *
 	 * @details In contrast with the other two Pop() options, PopBatch() takes advantage of the contiguous storage
-	 *          structure of BEASTQueue to reduce contention by allowing the retrieval of multiple items from the queue with
+	 *          structure of QACQueue to reduce contention by allowing the retrieval of multiple items from the queue with
 	 *          only a single atomic increment. A second atomic operation is used to keep track of how many elements it's allowed
 	 *          to read to ensure it doesn't over-consume the queue. When it does, a third atomic operation is used to correct.
 	 *
@@ -2678,7 +2677,7 @@ public:
 		}
 	}
 
-	void PopBatchWait(BatchPopList& result, ssize_t maxCount, size_t maxSpinsBeforeSemaphoreWait = BEAST_DEFAULT_SPIN_COUNT)
+	void PopBatchWait(BatchPopList& result, ssize_t maxCount, size_t maxSpinsBeforeSemaphoreWait = QAC_DEFAULT_SPIN_COUNT)
 	{
 		if constexpr (!t_EnableBatch)
 		{
@@ -2710,13 +2709,13 @@ private:
 	}
 	constexpr static int64_t asserted = assertSize<c_generationOp>();
 
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<size_t> m_readIdx;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<size_t> m_writeIdx;
-	alignas(BEAST_CACHELINE_SIZE) BufferElement m_buffer[c_adjustedSize];
-	alignas(BEAST_CACHELINE_SIZE) detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_readSubQueue;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_failedReads;
-	alignas(BEAST_CACHELINE_SIZE) detail::ReservationTicketSubQueue<WriteReservationTicket, t_AllocatorType> m_writeSubQueue;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_failedWrites;
-	alignas(BEAST_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
-	alignas(BEAST_CACHELINE_SIZE) bool pad;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<size_t> m_readIdx;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<size_t> m_writeIdx;
+	alignas(QAC_CACHELINE_SIZE) BufferElement m_buffer[c_adjustedSize];
+	alignas(QAC_CACHELINE_SIZE) detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_readSubQueue;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_failedReads;
+	alignas(QAC_CACHELINE_SIZE) detail::ReservationTicketSubQueue<WriteReservationTicket, t_AllocatorType> m_writeSubQueue;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_failedWrites;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
+	alignas(QAC_CACHELINE_SIZE) bool pad;
 };

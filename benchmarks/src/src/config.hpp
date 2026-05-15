@@ -78,9 +78,9 @@ namespace benchmarkTests
 	constexpr bool LatencyPingPong = true;
 }
 
-//#define BEAST_ONLY
+//#define QAC_ONLY
 
-#ifndef BEAST_ONLY
+#ifndef QAC_ONLY
 // Commenting out any of the below #include directives will disable the tests on it.
 // std::deque + std::mutex
 #include "wrappers/deque.hpp"
@@ -127,6 +127,6 @@ namespace benchmarkTests
 #include "wrappers/moodycamel.hpp"
 #endif
 
-// BEAST
-#include "wrappers/BEAST_Unbounded.hpp"
-#include "wrappers/BEAST_Bounded.hpp"
+// QAC
+#include "wrappers/QAC_Unbounded.hpp"
+#include "wrappers/QAC_Bounded.hpp"

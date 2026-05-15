@@ -1,13 +1,13 @@
 #pragma once
 
-#include "../../../../include/BEAST/ConcurrentQueue.hpp"
+#include "../../../../include/QAC/ConcurrentQueue.hpp"
 #include "../QueueWrapper.hpp"
 #include <thread>
 
-#define HAS_BEAST_UNBOUNDED
+#define HAS_QAC_UNBOUNDED
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::PERSISTENT, 0, PointerQueuePolicy::None>
+class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::PERSISTENT, 0, PointerQueuePolicy::None>
 {
 public:
 	void enqueue(size_t nElements, size_t offset, int tid)
@@ -23,7 +23,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -46,7 +46,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements, int tid)
 	{
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -56,11 +56,11 @@ public:
 		}
 	}
 private:
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
 };
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, size_t t_BatchSize, template<typename> typename t_AllocatorType>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::BATCH, t_BatchSize, PointerQueuePolicy::None>
+class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::BATCH, t_BatchSize, PointerQueuePolicy::None>
 {
 public:
 	void enqueue(size_t nElements, size_t offset, int tid)
@@ -83,7 +83,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
 
 		size_t totalRemaining = nElements;
 		while (totalRemaining > 0)
@@ -113,7 +113,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements, int tid)
 	{
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -121,11 +121,11 @@ public:
 		}
 	}
 private:
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
 };
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::EPHEMERAL, 0, PointerQueuePolicy::None>
+class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::EPHEMERAL, 0, PointerQueuePolicy::None>
 {
 public:
 	void enqueue(size_t nElements, size_t offset, int tid)
@@ -144,7 +144,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
+			typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
 			m_queue.InitializeReservationTicket(ticket);
 			while (!m_queue.TryPop(data, ticket)) {};
 #ifdef VERIFY
@@ -163,7 +163,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements, int tid)
 	{
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -173,11 +173,11 @@ public:
 		}
 	}
 private:
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
 };
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::NONE, 0, PointerQueuePolicy::None>
+class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::NONE, 0, PointerQueuePolicy::None>
 {
 public:
 	QueueWrapper()
@@ -224,11 +224,11 @@ public:
 		}
 	}
 private:
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
 };
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::WAIT, 0, PointerQueuePolicy::None>
+class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::WAIT, 0, PointerQueuePolicy::None>
 {
 public:
 	QueueWrapper()
@@ -268,7 +268,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements, int tid)
 	{
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
 		m_queue.InitializeReservationTicket(ticket);
 
 		t_ElementType data = t_ElementType();
@@ -278,11 +278,11 @@ public:
 		}
 	}
 private:
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
 };
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, size_t t_BatchSize, template<typename> typename t_AllocatorType>
-class QueueWrapper<BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::BATCHWAIT, t_BatchSize, PointerQueuePolicy::None>
+class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::BATCHWAIT, t_BatchSize, PointerQueuePolicy::None>
 {
 public:
 	void enqueue(size_t nElements, size_t offset, int tid)
@@ -305,7 +305,7 @@ public:
 #ifdef VERIFY
 		std::unordered_map<int, int> localValues;
 #endif
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
 
 		size_t totalRemaining = nElements;
 		while (totalRemaining > 0)
@@ -333,7 +333,7 @@ public:
 	}
 	void dequeueEmpty(size_t nElements, int tid)
 	{
-		typename BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BatchPopList batch = m_queue.CreatePopList();
 
 		for (size_t i = 0; i < nElements; ++i)
 		{
@@ -341,5 +341,5 @@ public:
 		}
 	}
 private:
-	BEAST::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
 };
