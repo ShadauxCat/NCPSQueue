@@ -145,8 +145,10 @@ maxes = {}
 
 mins = {}
 
-allMax = { "enqueue": 0, "dequeue": 0, "enq+deq": 0, "deq_empty": 0, "latency": 0 }
-allMin = { "enqueue": 9999999999999, "dequeue": 9999999999999, "enq+deq": 9999999999999, "deq_empty": 9999999999999, "latency": 0 }
+batchMax = { "enqueue": 0, "dequeue": 0, "enq+deq": 0, "deq_empty": 0, "latency": 0 }
+batchMin = { "enqueue": 9999999999999, "dequeue": 9999999999999, "enq+deq": 9999999999999, "deq_empty": 9999999999999, "latency": 0 }
+singleMax = { "enqueue": 0, "dequeue": 0, "enq+deq": 0, "deq_empty": 0, "latency": 0 }
+singleMin = { "enqueue": 9999999999999, "dequeue": 9999999999999, "enq+deq": 9999999999999, "deq_empty": 9999999999999, "latency": 0 }
 
 maxProd = 0
 maxCon = 0
@@ -262,11 +264,17 @@ for line in text.splitlines():
 				
 			d = maxes.setdefault(name, { "enqueue": 0, "dequeue": 0, "enq+deq": 0, "deq_empty": 0, "latency": 0 })
 			d[type] = max(max_throughput, d[type])
-			allMax[type] = max(max_throughput, allMax[type])
+			if "[Batch" in name:
+				batchMax[type] = max(max_throughput, batchMax[type])
+			else:
+				singleMax[type] = max(max_throughput, singleMax[type])
 		
 			d = mins.setdefault(name, { "enqueue": 9999999999999, "dequeue": 9999999999999, "enq+deq": 9999999999999, "deq_empty": 9999999999999, "latency": 9999999999999 })
 			d[type] = min(min_throughput, d[type])
-			allMin[type] = min(min_throughput, allMin[type])
+			if "[Batch" in name:
+				batchMin[type] = min(min_throughput, batchMin[type])
+			else:
+				singleMin[type] = min(min_throughput, singleMin[type])
 		
 		data.setdefault(name, {}).setdefault(type, []).append((producers, consumers, throughput, min_throughput, max_throughput))
 	except IndexError:
@@ -305,6 +313,8 @@ compareHeatmap = None
 def FormatLargeNumber(num):
 	if num is None:
 		return ""
+	if num < 0:
+		return "-" + FormatLargeNumber(-num)
 	num = float(num)
 	if num >= 1000000000:
 		num /= 1000000000
@@ -420,7 +430,7 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 					maxVals.append(dataPoints[4]-dataPoints[2])
 
 					texts.append(
-						"{}op/s".format(FormatLargeNumber(dataPoints[2]))
+						"{} op/s".format(FormatLargeNumber(dataPoints[2]))
 					)
 				
 			trace = plotly.graph_objs.Bar(
@@ -528,7 +538,7 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 			pNHcMin = []
 			pNHcText = []
 
-			heatmapMin = 0
+			heatmapMin = 9999999999999
 			heatmapMax = 0
 
 			global N
@@ -591,19 +601,17 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 					heatmap[dataPoints[1]][dataPoints[0]] -= compareHeatmap[dataPoints[1]][dataPoints[0]]
 					heatmapMin = min(heatmapMin, heatmap[dataPoints[1]][dataPoints[0]])
 					heatmapMax = max(heatmapMax, heatmap[dataPoints[1]][dataPoints[0]])
-					heatmaptxt[dataPoints[1]][dataPoints[0]] = "diff: {}op/s".format(intWithCommas(heatmap[dataPoints[1]][dataPoints[0]]))
+					heatmaptxt[dataPoints[1]][dataPoints[0]] = "diff: {} op/s".format(FormatLargeNumber(heatmap[dataPoints[1]][dataPoints[0]]))
 				else:
-					heatmaptxt[dataPoints[1]][dataPoints[0]] = "throughput: {}op/s".format(intWithCommas(dataPoints[2]))
+					heatmaptxt[dataPoints[1]][dataPoints[0]] = "throughput: {} op/s".format(FormatLargeNumber(dataPoints[2]))
 				
 				if dataPoints[2] is None:
 					colors.append(0)
-					sizes.append(0)
 					texts.append('')
 				else:
 					colors.append(dataPoints[2])
-					sizes.append(float(dataPoints[2])/float(allMax[type]) * ((imageHeight - 200) / max(maxProd, maxCon)))
 					texts.append(
-						"throughput: {}op/s".format(intWithCommas(dataPoints[2]))
+						"throughput: {} op/s".format(FormatLargeNumber(dataPoints[2]))
 					)
 
 			if forCompare:
@@ -759,35 +767,46 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 			
 			heatmap[0] = [None] * len(heatmap[1])
 
+			zmin = 0
 			if args.heatmap_compare and not greyscale:
-				zeroPct = -heatmapMin / (heatmapMax - heatmapMin)
+				zeroPct = 0.5#-heatmapMin / (heatmapMax - heatmapMin)
 				def getPos(originalPct):
 					return zeroPct + (originalPct * (1 - zeroPct))
 
 				global colorscale
 				colorscale = [
 					[0.0, 'rgb(255,127,255)'],
+					[getPos(-0.1), 'rgb(127,31,63)'],
 					[zeroPct, 'rgb(0,0,0)'],
-					[getPos(0.2), 'rgb(49,54,149)'],
-					[getPos(0.25), 'rgb(69,117,180)'],
+					[getPos(0.1), 'rgb(49,54,149)'],
+					[getPos(0.2), 'rgb(69,117,180)'],
 					[getPos(0.3), 'rgb(116,173,209)'],
-					[getPos(0.35), 'rgb(171,217,233)'],
-					[getPos(0.4), 'rgb(224,243,248)'],
-					[getPos(0.45), 'rgb(254,224,144)'],
-					[getPos(0.5), 'rgb(253,174,97)'],
-					[getPos(0.733), 'rgb(244,109,67)'],
-					[getPos(0.867), 'rgb(215,48,39)'],
+					[getPos(0.4), 'rgb(171,217,233)'],
+					[getPos(0.5), 'rgb(224,243,248)'],
+					[getPos(0.6), 'rgb(254,224,144)'],
+					[getPos(0.7), 'rgb(253,174,97)'],
+					[getPos(0.8), 'rgb(244,109,67)'],
+					[getPos(0.9), 'rgb(215,48,39)'],
 					[getPos(1.0), 'rgb(165,0,38)']
 				]
+				zmin = -batchMax[type] if "[Batch" in printName else -singleMax[type]
+
+			heatmaptext = []
+			for items in heatmap:
+				heatmaptext.append([])
+				for item in items:
+					heatmaptext[-1].append(FormatLargeNumber(item))
 			
 			trace = plotly.graph_objs.Heatmap(
 				z = heatmap,
-				text=heatmaptxt,
+				#text=heatmaptxt,
 				colorscale=colorscale,
 				zsmooth='best',
-				zmin=0,
-				#zmax=allMax[type],
-				texttemplate="%{z:.4s}"
+				zmin=zmin,
+				zmax=batchMax[type] if "[Batch" in printName else singleMax[type],
+				#texttemplate="%{z:.4s}"
+				text=heatmaptext,
+				texttemplate="%{text}",
 			)
 			trace2 = plotly.graph_objs.Scatter(
 				x = [len(heatmap)-1, 0.5],
@@ -805,8 +824,8 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 
 			data = [trace, trace2]
 			layout = plotly.graph_objs.Layout(
-				title = '{}<br>min: {}op/s<br>max: {}op/s'.format(
-					printName+add, intWithCommas(heatmapMin if args.heatmap_compare else mins[name][type]), intWithCommas(heatmapMax if args.heatmap_compare else maxes[name][type])
+				title = '{}<br>min: {} op/s<br>max: {} op/s'.format(
+					printName+add, FormatLargeNumber(heatmapMin if args.heatmap_compare else mins[name][type]), FormatLargeNumber(heatmapMax if args.heatmap_compare else maxes[name][type])
 				),
 				xaxis = dict(
 					title = 'Producer Threads',
