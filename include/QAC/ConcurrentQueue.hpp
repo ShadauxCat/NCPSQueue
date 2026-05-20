@@ -234,8 +234,41 @@ struct QAC::detail::BufferElementImpl
 	static constexpr intptr_t READY_SENTINEL = 1;
 	static constexpr intptr_t FREE_SENTINEL = 0;
 
-	std::atomic<std::binary_semaphore*> notifier;
-	t_ElementType item;
+	t_ElementType* item;
+	std::atomic<std::binary_semaphore*>* notifier;
+
+	QAC_FORCE_INLINE BufferElementImpl& operator++()
+	{
+		++item;
+		++notifier;
+		return *this;
+	}
+
+	ptrdiff_t operator-(BufferElementImpl other)
+	{
+		return item - other.item;
+	}
+	bool operator>(BufferElementImpl other)
+	{
+		return item > other.item;
+	}
+	bool operator>=(BufferElementImpl other)
+	{
+		return item >= other.item;
+	}
+	bool operator<(BufferElementImpl other)
+	{
+		return item < other.item;
+	}
+	bool operator<=(BufferElementImpl other)
+	{
+		return item <= other.item;
+	}
+	void operator=(BufferElementImpl const& other)
+	{
+		item = other.item;
+		notifier = other.notifier;
+	}
 };
 
 template<typename t_ElementType>
@@ -246,8 +279,40 @@ struct QAC::detail::BufferElementImpl<t_ElementType, false>
 	static constexpr bool READY_SENTINEL = true;
 	static constexpr bool FREE_SENTINEL = false;
 
-	std::atomic<bool> notifier;
-	t_ElementType item;
+	t_ElementType* item;
+	std::atomic<bool>* notifier;
+
+	QAC_FORCE_INLINE BufferElementImpl& operator++()
+	{
+		++item;
+		++notifier;
+		return *this;
+	}
+	ptrdiff_t operator-(BufferElementImpl other)
+	{
+		return item - other.item;
+	}
+	bool operator>(BufferElementImpl other)
+	{
+		return item > other.item;
+	}
+	bool operator>=(BufferElementImpl other)
+	{
+		return item >= other.item;
+	}
+	bool operator<(BufferElementImpl other)
+	{
+		return item < other.item;
+	}
+	bool operator<=(BufferElementImpl other)
+	{
+		return item <= other.item;
+	}
+	void operator=(BufferElementImpl const& other)
+	{
+		item = other.item;
+		notifier = other.notifier;
+	}
 };
 
 template<typename t_ElementType, bool t_WithSemaphore>
@@ -286,12 +351,13 @@ public:
 	Buffer()
 		: m_next(nullptr),
 		m_refCount(t_BlockSize + 2),  // One for each element, one for the writeBuffer pointer, and one for the readBuffer pointer
-		m_readPos(reinterpret_cast<BufferElement*>(m_buffer)),
-		m_writePos(reinterpret_cast<BufferElement*>(m_buffer)),
-		m_end(reinterpret_cast<BufferElement*>(m_buffer) + t_BlockSize)
+		m_readPos(reinterpret_cast<t_ElementType*>(m_buffer)),
+		m_writePos(reinterpret_cast<t_ElementType*>(m_buffer)),
+		m_end(reinterpret_cast<t_ElementType*>(m_buffer) + t_BlockSize)
 	{
 		// Memset the buffer block to 0 so all 'ready' flags read as 'false'
-		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(BufferElement) * t_BlockSize);
+		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(t_ElementType) * t_BlockSize);
+		memset(reinterpret_cast<void*>(m_notifiers), 0, sizeof(std::atomic<typename BufferElement::NotifierType>) * t_BlockSize);
 	}
 
 	/**
@@ -317,7 +383,8 @@ public:
 	inline void Clear()
 	{
 		m_refCount.store(t_BlockSize + 2);
-		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(BufferElement) * t_BlockSize);
+		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(t_ElementType) * t_BlockSize);
+		memset(reinterpret_cast<void*>(m_notifiers), 0, sizeof(std::atomic<typename BufferElement::NotifierType>) * t_BlockSize);
 	}
 
 	/**
@@ -325,7 +392,7 @@ public:
 	 */
 	inline void SetWritePosition() 
 	{ 
-		m_writePos.store(reinterpret_cast<BufferElement*>(m_buffer)); 
+		m_writePos.store(reinterpret_cast<t_ElementType*>(m_buffer));
 	}
 
 	/**
@@ -333,7 +400,7 @@ public:
 	 */
 	inline void SetReadPosition() 
 	{ 
-		m_readPos.store(reinterpret_cast<BufferElement*>(m_buffer)); 
+		m_readPos.store(reinterpret_cast<t_ElementType*>(m_buffer)); 
 	}
 
 	/**
@@ -383,14 +450,18 @@ public:
 	 *
 	 * @return  A pointer to an element. If the pointer is < this->GetEnd(), it is valid to read from.
 	 */
-	inline BufferElement* GetForRead()
+	inline BufferElement GetForRead()
 	{
-		return m_readPos.fetch_add(1, std::memory_order_acq_rel);
+		t_ElementType* element = m_readPos.fetch_add(1, std::memory_order_acq_rel);
+		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
+		return { element, notifier };
 	}
 
-	inline BufferElement* GetBatchForRead(ssize_t count)
+	inline BufferElement GetBatchForRead(ssize_t count)
 	{
-		return m_readPos.fetch_add(count, std::memory_order_acq_rel);
+		t_ElementType* element = m_readPos.fetch_add(count, std::memory_order_acq_rel);
+		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
+		return { element, notifier };
 	}
 
 	/**
@@ -404,14 +475,18 @@ public:
 	 *
 	 * @return  A pointer to an element. If the pointer is < this->GetEnd(), it is valid to write to.
 	 */
-	inline BufferElement* GetForWrite()
+	inline BufferElement GetForWrite()
 	{
-		return m_writePos.fetch_add(1, std::memory_order_acq_rel);
+		t_ElementType* element = m_writePos.fetch_add(1, std::memory_order_acq_rel);
+		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
+		return { element, notifier };
 	}
 
-	inline BufferElement* GetBatchForWrite(ssize_t count)
+	inline BufferElement GetBatchForWrite(ssize_t count)
 	{
-		return m_writePos.fetch_add(count, std::memory_order_acq_rel);
+		t_ElementType* element = m_writePos.fetch_add(count, std::memory_order_acq_rel);
+		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
+		return { element, notifier };
 	}
 
 	/**
@@ -420,9 +495,9 @@ public:
 	 *
 	 * @return  A pointer to the end of the buffer.
 	 */
-	inline BufferElement const* GetEnd() const
+	inline BufferElement const GetEnd() const
 	{
-		return m_end;
+		return { m_end, nullptr };
 	}
 
 	/**
@@ -431,9 +506,9 @@ public:
 	 *
 	 * @return  A pointer to the start of the buffer.
 	*/
-	inline BufferElement const* GetStart() const
+	inline BufferElement const GetStart()
 	{
-		return reinterpret_cast<BufferElement const*>(m_buffer);
+		return { reinterpret_cast<t_ElementType*>(m_buffer), nullptr };
 	}
 
 	/**
@@ -468,10 +543,10 @@ public:
 	 */
 	void Cleanup()
 	{
-		BufferElement* element = this->GetForRead();
-		while(element < m_end && element->notifier == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
+		BufferElement element = this->GetForRead();
+		while(element.item < m_end && element.notifier->load(std::memory_order_relaxed) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 		{
-			element->item.~t_ElementType();
+			element.item->~t_ElementType();
 			element = this->GetForRead();
 		}
 	}
@@ -489,12 +564,13 @@ public:
 private:
 	alignas(QAC_CACHELINE_SIZE) std::atomic<Buffer*> m_next;
 	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_refCount;
-	alignas(QAC_CACHELINE_SIZE) std::atomic<BufferElement*> m_readPos;
-	alignas(QAC_CACHELINE_SIZE) std::atomic<BufferElement*> m_writePos;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<t_ElementType*> m_readPos;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<t_ElementType*> m_writePos;
 	alignas(QAC_CACHELINE_SIZE) int64_t m_generation{ 0 };
 
-	char m_buffer[t_BlockSize * sizeof(BufferElement)];
-	BufferElement const* const m_end;
+	char m_buffer[t_BlockSize * sizeof(t_ElementType)];
+	char m_notifiers[t_BlockSize * sizeof(std::atomic<typename BufferElement::NotifierType>)];
+	t_ElementType* const m_end;
 };
 
 /**
@@ -508,7 +584,7 @@ template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t
 struct QAC::ReadReservationTicket
 {
 	detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>* buffer{ nullptr };
-	typename detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>::BufferElement* ptr{ nullptr };
+	typename detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>::BufferElement ptr{ nullptr, nullptr };
 	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>* queue{ nullptr };
 
 	ReadReservationTicket()
@@ -531,7 +607,7 @@ struct QAC::ReadReservationTicket
 		ptr = other.ptr;
 		queue = other.queue;
 		other.buffer = nullptr;
-		other.ptr = nullptr;
+		other.ptr = { nullptr, nullptr };
 		return *this;
 	}
 };
@@ -780,7 +856,7 @@ protected:
 	 *          keeps the code for the COMMON case small, and the cost of a function call for the uncommon case
 	 *          is largely irrelevant.
 	 */
-	QAC_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t batchCount)
+	QAC_FORCE_NO_INLINE void fetchNextWriteBuffer_(typename Buffer::BufferElement& element, Buffer*& buffer, ssize_t batchCount)
 	{
 		// Just because we won the lottery, though, doesn't mean we're the only ones who won.
 		// Someone else may have already claimed the prize. We need to make sure we still
@@ -836,7 +912,7 @@ protected:
 	 *          keeps the code for the COMMON case small, and the cost of a function call for the uncommon case
 	 *          is largely irrelevant.
 	 */
-	QAC_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ReadReservationTicket& ticket)
+	QAC_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement& element, Buffer*& buffer, ReadReservationTicket& ticket)
 	{
 		buffer = m_readBuffer.load(std::memory_order_acquire);
 		element = buffer->GetForRead();
@@ -866,7 +942,7 @@ protected:
 		return true;
 	}
 
-	QAC_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement*& element, Buffer*& buffer, ssize_t count)
+	QAC_FORCE_NO_INLINE bool fetchNextReadBuffer_(typename Buffer::BufferElement& element, Buffer*& buffer, ssize_t count)
 	{
 		buffer = m_readBuffer.load(std::memory_order_acquire);
 		element = buffer->GetBatchForRead(count);
@@ -904,11 +980,11 @@ protected:
 	 *
 	 * @return  The next viable write element for the queue
 	 */
-	inline typename Buffer::BufferElement& getNextElement_()
+	inline typename Buffer::BufferElement getNextElement_()
 	{
 		// First we try to retrieve an element for write from our write buffer.
 		Buffer* buffer = m_writeBuffer.load(std::memory_order_acquire);
-		typename Buffer::BufferElement* element = buffer->GetForWrite();
+		typename Buffer::BufferElement element = buffer->GetForWrite();
 
 		// The write buffer may be full. If it is, it'll return a pointer past the end of the buffer.
 		// If that happens we have to retrieve or allocate a new buffer.
@@ -932,7 +1008,7 @@ protected:
 		}
 
 		// Now we've gotten an element! We can return it back to the caller!
-		return *element;
+		return element;
 	}
 
 public:
@@ -987,12 +1063,12 @@ public:
 	 */
 	inline void Push(t_ElementType const& val)
 	{
-		typename Buffer::BufferElement& element = getNextElement_();
-		new (&element.item) t_ElementType(val);
+		typename Buffer::BufferElement element = getNextElement_();
+		new (element.item) t_ElementType(val);
 		QAC_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
 		if constexpr (t_EnableIdleSleep)
 		{
-			auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
+			auto notifier = element.notifier->exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 			if (notifier != nullptr) [[unlikely]]
 			{
 				notifier->release();
@@ -1000,7 +1076,7 @@ public:
 		}
 		else
 		{
-			element.notifier.store(true);
+			element.notifier->store(true, std::memory_order_release);
 		}
 		if constexpr(t_EnableBatch)
 		{
@@ -1015,25 +1091,73 @@ public:
 	 */
 	inline void PushMove(t_ElementType&& val)
 	{
-		typename Buffer::BufferElement& element = getNextElement_();
-		new (&element.item) t_ElementType(std::move(val));
+		typename Buffer::BufferElement element = getNextElement_();
+		new (element.item) t_ElementType(std::move(val));
 		QAC_CONCURRENT_QUEUE_ASSERT(element.notifier.load() == nullptr);
 		if constexpr (t_EnableIdleSleep)
 		{
-			auto notifier = element.notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
+			auto notifier = element.notifier->exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
 			if (notifier != nullptr) [[unlikely]]
-			{
-				notifier->release();
-			}
+				{
+					notifier->release();
+				}
 		}
 		else
 		{
-			element.notifier.store(true);
+			element.notifier->store(true, std::memory_order_release);
 		}
-		if constexpr(t_EnableBatch)
+		if constexpr (t_EnableBatch)
 		{
 			m_outstanding.fetch_add(1, std::memory_order_release);
 		}
+	}
+
+	inline ssize_t PushBatchPartial(t_ElementType* vals, ssize_t count)
+	{
+		Buffer* buffer = m_writeBuffer.load(std::memory_order_acquire);
+		typename Buffer::BufferElement element = buffer->GetBatchForWrite(count);
+		typename Buffer::BufferElement end = buffer->GetEnd();
+		while (element >= end) [[unlikely]]
+		{
+			// When we get here, we use a simple atomic boolean as a spin lock.
+			// We perform an exchange() on it - if it returns false, that means we won the lottery
+			// because we were the first to set it true.
+			if (!m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
+			{
+				fetchNextWriteBuffer_(element, buffer, count);
+				m_reallocatingBuffer.store(false, std::memory_order_release);
+				end = buffer->GetEnd();
+
+				QAC_YIELD();
+			}
+		}
+		ssize_t pushedCount = std::min(count, end - element);
+		if constexpr (std::is_trivially_copyable<t_ElementType>::value)
+		{
+			memcpy(element.item, reinterpret_cast<void*>(vals), pushedCount * sizeof(t_ElementType));
+		}
+		for (ssize_t i = 0; i < pushedCount; ++i)
+		{
+			if constexpr (!std::is_trivially_copyable<t_ElementType>::value)
+			{
+				new (element.item) t_ElementType(vals[i]);
+			}
+			if constexpr (t_EnableIdleSleep)
+			{
+				auto notifier = element.notifier->exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
+				if (notifier != nullptr) [[unlikely]]
+				{
+					notifier->release();
+				}
+			}
+			else
+			{
+				element.notifier->store(true, std::memory_order_release);
+			}
+			++element;
+		}
+		m_outstanding.fetch_add(pushedCount, std::memory_order_release);
+		return pushedCount;
 	}
 
 	/**
@@ -1048,56 +1172,20 @@ public:
 	 * @param   vals   A C-style array of objects to push
 	 * @param   count  The number of items in the array. (Note this is not necessarily the memory size of the array, but the number of elements that should actually be read from it.)
 	 */
-	inline void PushBatch(t_ElementType* vals, ssize_t count)
+	inline void PushBatch(t_ElementType * vals, ssize_t count)
 	{
-		if constexpr(!t_EnableBatch)
+		if constexpr (!t_EnableBatch)
 		{
 			throw std::logic_error("Batch operations are not enabled on this queue.");
 		}
 		else
 		{
-			Buffer* buffer = m_writeBuffer.load(std::memory_order_acquire);
-			typename Buffer::BufferElement* element = buffer->GetBatchForWrite(count);
-			typename Buffer::BufferElement const* end = buffer->GetEnd();
-			for(ssize_t i = 0; i < count; ++i)
+			while (count > 0)
 			{
-				// The write buffer may be full. If it is, it'll return a pointer past the end of the buffer.
-				// If that happens we have to retrieve or allocate a new buffer.
-				// Strictly speaking, this section violates lock-free because the allocation happens within a spin-lock.
-				// Practically speaking, this spin-lock happens so infrequently in a queue with a proper block size that
-				// it may as well never happen at all.
-				while(element >= end) [[unlikely]]
-				{
-					// When we get here, we use a simple atomic boolean as a spin lock.
-					// We perform an exchange() on it - if it returns false, that means we won the lottery
-					// because we were the first to set it true.
-					if(!m_reallocatingBuffer.exchange(true, std::memory_order_acq_rel))
-					{
-						fetchNextWriteBuffer_(element, buffer, count - i);
-						m_reallocatingBuffer.store(false, std::memory_order_release);
-						end = buffer->GetEnd();
-					}
-					else
-					{
-						QAC_YIELD();
-					}
-				}
-				new (&element->item) t_ElementType(vals[i]);
-				if constexpr (t_EnableIdleSleep)
-				{
-					auto notifier = element->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL), std::memory_order_release);
-					if (notifier != nullptr) [[unlikely]]
-					{
-						notifier->release();
-					}
-				}
-				else
-				{
-					element->notifier.store(true);
-				}
-				++element;
+				ssize_t pushedCount = PushBatchPartial(vals, count);
+				vals += pushedCount;
+				count -= pushedCount;
 			}
-			m_outstanding.fetch_add(count, std::memory_order_release);
 		}
 	}
 
@@ -1179,12 +1267,12 @@ public:
 	inline bool TryPop(t_ElementType& val, ReadReservationTicket& ticket)
 	{
 		// For reads, we'll start out by checking our reservation ticket. If it's got cached data, we can skip a lot of work we already did.
-		typename Buffer::BufferElement* element = ticket.ptr;
+		typename Buffer::BufferElement element = ticket.ptr;
 		Buffer* buffer = ticket.buffer;
 
 		// There are a few cases we can run into in the pop operation.
 		// The easiest case is after a failed pop, in which case we already have our element and can check it again.
-		if(!element) [[likely]]
+		if(!element.item) [[likely]]
 		{
 			// The second case is when the ticket passed in has been held over from a previous successful pop.
 			// In this case we don't have to worry about acquiring the read buffer, because it's cached. We only have
@@ -1222,17 +1310,17 @@ public:
 		// Now that we have an element to read, we have to check if there's any actual data in it.
 		// If not, we're going to remember this element in the reservation ticket and come back to it later.
 		// This definitively prevents any race conditions involved in attempting to correct for overcommit.
-		auto notifier = element->notifier.load(std::memory_order_acquire);
+		auto notifier = element.notifier->load(std::memory_order_acquire);
 		if(notifier == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[likely]]
 		{
 			// If the element did have valid data, we need to make sure our ticket's not holding any cache information.
 			// Otherwise we'd just keep ending up reading the same cached element over and over.
-			ticket.ptr = nullptr;
+			ticket.ptr = { nullptr, nullptr };
 
 			// Finally, we'll go ahead and pull the data from the element, destroy it, and decrement and possibly free the buffer.
 			// Then we can return true - success!
-			val = std::move(element->item);
-			element->item.~t_ElementType();
+			val = std::move(*element.item);
+			element.item->~t_ElementType();
 			QAC_CONCURRENT_QUEUE_ASSERT(element->notifier.exchange(nullptr, std::memory_order_acq_rel) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 			// Surprisingly, even though the ability exists to store a local count on the ticket
@@ -1255,7 +1343,7 @@ public:
 	{
 		ReadReservationTicket ticket;
 		InitializeReservationTicket(ticket);
-		while (ticket.ptr == nullptr)
+		while (ticket.ptr.item == nullptr)
 		{
 			if (TryPop(val, ticket))
 			{
@@ -1263,7 +1351,7 @@ public:
 			}
 		}
 		size_t spins = 0;
-		while (ticket.ptr->notifier.load(std::memory_order_acquire) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) [[unlikely]]
+		while (ticket.ptr.notifier->load(std::memory_order_acquire) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) [[unlikely]]
 		{
 			QAC_YIELD();
 			if constexpr (t_EnableIdleSleep)
@@ -1271,7 +1359,7 @@ public:
 				if (++spins > maxSpinsBeforeSemaphoreWait)
 				{
 					std::binary_semaphore semaphore(0);
-					std::binary_semaphore* previous = ticket.ptr->notifier.exchange(&semaphore, std::memory_order_acq_rel);
+					std::binary_semaphore* previous = ticket.ptr.notifier->exchange(&semaphore, std::memory_order_acq_rel);
 					if (previous != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 					{
 						semaphore.acquire();
@@ -1280,8 +1368,8 @@ public:
 				}
 			}
 		}
-		val = std::move(ticket.ptr->item);
-		ticket.ptr->item.~t_ElementType();
+		val = std::move(*ticket.ptr.item);
+		ticket.ptr.item->~t_ElementType();
 		QAC_CONCURRENT_QUEUE_ASSERT(ticket.ptr->notifier.exchange((typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::FREE_SENTINEL)) == (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL));
 
 		consume_(ticket.buffer, 1);
@@ -1415,14 +1503,14 @@ public:
 					}
 				}
 			}
-			if(m_element->notifier.load(std::memory_order_acquire) != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
+			if(m_element.notifier->load(std::memory_order_acquire) != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
 			{
 				m_pendingRead = true;
 				return false;
 			}
 			++m_consumed;
-			val = t_ElementType(std::move(m_element->item));
-			m_element->item.~t_ElementType();
+			val = t_ElementType(std::move(*m_element.item));
+			m_element.item->~t_ElementType();
 			--m_remaining;
 			++m_element;
 			m_pendingRead = false;
@@ -1470,7 +1558,7 @@ public:
 			}
 
 			size_t spins = 0;
-			while (m_element->notifier.load(std::memory_order_acquire) != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
+			while (m_element.notifier->load(std::memory_order_acquire) != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL)) [[unlikely]]
 			{
 				QAC_YIELD();
 				if constexpr (t_EnableIdleSleep)
@@ -1478,7 +1566,7 @@ public:
 					if (++spins > maxSpinsBeforeSemaphoreWait)
 					{
 						std::binary_semaphore semaphore(0);
-						std::binary_semaphore* previous = m_element->notifier.exchange(&semaphore, std::memory_order_acq_rel);
+						std::binary_semaphore* previous = m_element.notifier->exchange(&semaphore, std::memory_order_acq_rel);
 						if (previous != (typename Buffer::BufferElement::NotifierType)(Buffer::BufferElement::READY_SENTINEL))
 						{
 							semaphore.acquire();
@@ -1489,8 +1577,8 @@ public:
 			}
 
 			++m_consumed;
-			val = t_ElementType(std::move(m_element->item));
-			m_element->item.~t_ElementType();
+			val = t_ElementType(std::move(*m_element.item));
+			m_element.item->~t_ElementType();
 			--m_remaining;
 			++m_element;
 			m_pendingRead = false;
@@ -1554,8 +1642,8 @@ public:
 
 		friend class ConcurrentQueue;
 		ConcurrentQueue* m_queue;
-		typename Buffer::BufferElement* m_element;
-		typename Buffer::BufferElement const* m_end;
+		typename Buffer::BufferElement m_element;
+		typename Buffer::BufferElement m_end;
 		Buffer* m_buffer{ nullptr };
 		ssize_t m_remaining{ 0 };
 		ssize_t m_count{ 0 };
@@ -1645,7 +1733,7 @@ public:
 				}
 			}
 			Buffer* buffer = m_readBuffer.load(std::memory_order_acquire);
-			typename Buffer::BufferElement* element = buffer->GetBatchForRead(batchSize);
+			typename Buffer::BufferElement element = buffer->GetBatchForRead(batchSize);
 			if((result.m_buffer != buffer) & (result.m_consumed != 0))
 			{
 				consume_(result.m_buffer, result.m_consumed);

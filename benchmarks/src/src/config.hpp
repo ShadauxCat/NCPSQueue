@@ -38,11 +38,11 @@ namespace benchmarkConfig
 
 #if RUNMODE == MODE_VERIFY
 	static constexpr int nIters = 1;
-	static constexpr bool beastFullSet = true;
+	static constexpr bool qacFullSet = true;
 	static constexpr bool moodyCamelFullSet = true;
 #else
 	static constexpr int nIters = 10;
-	static constexpr bool beastFullSet = false;
+	static constexpr bool qacFullSet = false;
 	static constexpr bool moodyCamelFullSet = false;
 #endif
 
