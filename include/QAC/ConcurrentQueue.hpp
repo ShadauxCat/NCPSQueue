@@ -117,14 +117,17 @@ namespace QAC
 #endif
 	namespace detail
 	{
-		template <typename t_ElementType, size_t t_BlockSize, bool t_EnableIdleSleep>
+		template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep>
 		class Buffer;
 
 		template <typename t_ElementType, template<typename> typename t_AllocatorType>
 		class ReservationTicketSubQueue;
 
-		template<typename t_ElementType, bool t_WithSemaphore>
+		template<typename t_ElementType, bool t_EnableBatch, bool t_WithSemaphore>
 		struct BufferElementImpl;
+
+		template<typename t_ElementType, bool t_WithSemaphore>
+		struct UnbatchedBufferElementImpl;
 
 		template<typename t_ElementType, bool t_WithSemaphore>
 		struct BoundedBufferElementImpl;
@@ -226,7 +229,7 @@ namespace QAC
 }  // namespace QAC
 
 
-template<typename t_ElementType, bool t_WithSemaphore>
+template<typename t_ElementType, bool t_EnableBatch, bool t_WithSemaphore>
 struct QAC::detail::BufferElementImpl
 {
 	typedef std::binary_semaphore* NotifierType;
@@ -272,7 +275,7 @@ struct QAC::detail::BufferElementImpl
 };
 
 template<typename t_ElementType>
-struct QAC::detail::BufferElementImpl<t_ElementType, false>
+struct QAC::detail::BufferElementImpl<t_ElementType, true, false>
 {
 	typedef bool NotifierType;
 
@@ -314,6 +317,125 @@ struct QAC::detail::BufferElementImpl<t_ElementType, false>
 		notifier = other.notifier;
 	}
 };
+template<typename t_ElementType, bool t_WithSemaphore>
+struct QAC::detail::UnbatchedBufferElementImpl
+{
+	typedef std::binary_semaphore* NotifierType;
+
+	static constexpr intptr_t READY_SENTINEL = 1;
+	static constexpr intptr_t FREE_SENTINEL = 0;
+
+	t_ElementType item;
+	std::atomic<std::binary_semaphore*> notifier;
+};
+
+template<typename t_ElementType>
+struct QAC::detail::UnbatchedBufferElementImpl<t_ElementType, false>
+{
+	typedef bool NotifierType;
+
+	static constexpr bool READY_SENTINEL = true;
+	static constexpr bool FREE_SENTINEL = false;
+
+	t_ElementType item;
+	std::atomic<bool> notifier;
+};
+
+template<typename t_ElementType>
+struct QAC::detail::BufferElementImpl<t_ElementType, false, true>
+{
+	typedef std::binary_semaphore* NotifierType;
+
+	static constexpr intptr_t READY_SENTINEL = 1;
+	static constexpr intptr_t FREE_SENTINEL = 0;
+
+	UnbatchedBufferElementImpl<t_ElementType, true>* element;
+	t_ElementType* item;
+	std::atomic<std::binary_semaphore*>* notifier;
+
+	QAC_FORCE_INLINE BufferElementImpl& operator++()
+	{
+		++element;
+		item = &element->item;
+		notifier = &element->notifier;
+		return *this;
+	}
+
+	ptrdiff_t operator-(BufferElementImpl other)
+	{
+		return element - other.element;
+	}
+	bool operator>(BufferElementImpl other)
+	{
+		return element > other.element;
+	}
+	bool operator>=(BufferElementImpl other)
+	{
+		return element >= other.element;
+	}
+	bool operator<(BufferElementImpl other)
+	{
+		return element < other.element;
+	}
+	bool operator<=(BufferElementImpl other)
+	{
+		return element <= other.element;
+	}
+	void operator=(BufferElementImpl const& other)
+	{
+		element = other.element;
+		item = other.item;
+		notifier = other.notifier;
+	}
+};
+
+template<typename t_ElementType>
+struct QAC::detail::BufferElementImpl<t_ElementType, false, false>
+{
+	typedef bool NotifierType;
+
+	static constexpr bool READY_SENTINEL = true;
+	static constexpr bool FREE_SENTINEL = false;
+
+	UnbatchedBufferElementImpl<t_ElementType, false>* element;
+	t_ElementType* item;
+	std::atomic<bool>* notifier;
+
+	QAC_FORCE_INLINE BufferElementImpl& operator++()
+	{
+		++element;
+		item = &element->item;
+		notifier = &element->notifier;
+		return *this;
+	}
+
+	ptrdiff_t operator-(BufferElementImpl other)
+	{
+		return element - other.element;
+	}
+	bool operator>(BufferElementImpl other)
+	{
+		return element > other.element;
+	}
+	bool operator>=(BufferElementImpl other)
+	{
+		return element >= other.element;
+	}
+	bool operator<(BufferElementImpl other)
+	{
+		return element < other.element;
+	}
+	bool operator<=(BufferElementImpl other)
+	{
+		return element <= other.element;
+	}
+	void operator=(BufferElementImpl const& other)
+	{
+		element = other.element;
+		item = other.item;
+		notifier = other.notifier;
+	}
+};
 
 template<typename t_ElementType, bool t_WithSemaphore>
 struct QAC::detail::BoundedBufferElementImpl
@@ -341,23 +463,34 @@ struct QAC::detail::BoundedBufferElementImpl<t_ElementType, false>
  *          the majority of the atomic operations, as the read and write position are both
  *          contained within this class.
  */
-template <typename t_ElementType, size_t t_BlockSize, bool t_EnableIdleSleep>
+template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep>
 class alignas(QAC_CACHELINE_SIZE) QAC::detail::Buffer
 {
 public:
 
-	using BufferElement = QAC::detail::BufferElementImpl<t_ElementType, t_EnableIdleSleep>;
+	using BufferElement = QAC::detail::BufferElementImpl<t_ElementType, t_EnableBatch, t_EnableIdleSleep>;
+	using UnbatchedBufferElement = QAC::detail::UnbatchedBufferElementImpl<t_ElementType, t_EnableIdleSleep>;
 
 	Buffer()
 		: m_next(nullptr),
 		m_refCount(t_BlockSize + 2),  // One for each element, one for the writeBuffer pointer, and one for the readBuffer pointer
-		m_readPos(reinterpret_cast<t_ElementType*>(m_buffer)),
-		m_writePos(reinterpret_cast<t_ElementType*>(m_buffer)),
-		m_end(reinterpret_cast<t_ElementType*>(m_buffer) + t_BlockSize)
+		m_readPos(reinterpret_cast<t_ElementType*>(m_buffer.elements)),
+		m_writePos(reinterpret_cast<t_ElementType*>(m_buffer.elements)),
+		m_readPosUnbatched(reinterpret_cast<UnbatchedBufferElement*>(m_buffer.unbatchedBuffer)),
+		m_writePosUnbatched(reinterpret_cast<UnbatchedBufferElement*>(m_buffer.unbatchedBuffer)),
+		m_end(reinterpret_cast<t_ElementType*>(m_buffer.elements) + t_BlockSize),
+		m_endUnbatched(reinterpret_cast<UnbatchedBufferElement*>(m_buffer.unbatchedBuffer) + t_BlockSize)
 	{
 		// Memset the buffer block to 0 so all 'ready' flags read as 'false'
-		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(t_ElementType) * t_BlockSize);
-		memset(reinterpret_cast<void*>(m_notifiers), 0, sizeof(std::atomic<typename BufferElement::NotifierType>) * t_BlockSize);
+		if constexpr (t_EnableBatch)
+		{
+			memset(reinterpret_cast<void*>(m_buffer.elements), 0, sizeof(t_ElementType) * t_BlockSize);
+			memset(reinterpret_cast<void*>(m_buffer.notifiers), 0, sizeof(std::atomic<typename BufferElement::NotifierType>) * t_BlockSize);
+		}
+		else
+		{
+			memset(reinterpret_cast<void*>(m_buffer.unbatchedBuffer), 0, sizeof(UnbatchedBufferElement) * t_BlockSize);
+		}
 	}
 
 	/**
@@ -383,24 +516,45 @@ public:
 	inline void Clear()
 	{
 		m_refCount.store(t_BlockSize + 2);
-		memset(reinterpret_cast<void*>(m_buffer), 0, sizeof(t_ElementType) * t_BlockSize);
-		memset(reinterpret_cast<void*>(m_notifiers), 0, sizeof(std::atomic<typename BufferElement::NotifierType>) * t_BlockSize);
+		if constexpr (t_EnableBatch)
+		{
+			memset(reinterpret_cast<void*>(m_buffer.elements), 0, sizeof(t_ElementType) * t_BlockSize);
+			memset(reinterpret_cast<void*>(m_buffer.notifiers), 0, sizeof(std::atomic<typename BufferElement::NotifierType>) * t_BlockSize);
+		}
+		else
+		{
+			memset(reinterpret_cast<void*>(m_buffer.unbatchedBuffer), 0, sizeof(UnbatchedBufferElement) * t_BlockSize);
+		}
 	}
 
 	/**
 	 * @brief   Resets the write position
 	 */
 	inline void SetWritePosition() 
-	{ 
-		m_writePos.store(reinterpret_cast<t_ElementType*>(m_buffer));
+	{
+		if constexpr (t_EnableBatch)
+		{
+			m_writePos.store(reinterpret_cast<t_ElementType*>(m_buffer.elements));
+		}
+		else
+		{
+			m_writePosUnbatched.store(reinterpret_cast<UnbatchedBufferElement*>(m_buffer.unbatchedBuffer));
+		}
 	}
 
 	/**
 	 * @brief   Resets the read position
 	 */
 	inline void SetReadPosition() 
-	{ 
-		m_readPos.store(reinterpret_cast<t_ElementType*>(m_buffer)); 
+	{
+		if constexpr (t_EnableBatch)
+		{
+			m_readPos.store(reinterpret_cast<t_ElementType*>(m_buffer.elements));
+		}
+		else
+		{
+			m_readPosUnbatched.store(reinterpret_cast<UnbatchedBufferElement*>(m_buffer.unbatchedBuffer));
+		}
 	}
 
 	/**
@@ -452,16 +606,32 @@ public:
 	 */
 	inline BufferElement GetForRead()
 	{
-		t_ElementType* element = m_readPos.fetch_add(1, std::memory_order_acq_rel);
-		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
-		return { element, notifier };
+		if constexpr (t_EnableBatch)
+		{
+			t_ElementType* element = m_readPos.fetch_add(1, std::memory_order_acq_rel);
+			std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_buffer.notifiers) + (element - GetStart().item);
+			return { element, notifier };
+		}
+		else
+		{
+			UnbatchedBufferElement* element = m_readPosUnbatched.fetch_add(1, std::memory_order_acq_rel);
+			return { element, &element->item, &element->notifier };
+		}
 	}
 
 	inline BufferElement GetBatchForRead(ssize_t count)
 	{
-		t_ElementType* element = m_readPos.fetch_add(count, std::memory_order_acq_rel);
-		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
-		return { element, notifier };
+		if constexpr (t_EnableBatch)
+		{
+			t_ElementType* element = m_readPos.fetch_add(count, std::memory_order_acq_rel);
+			std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_buffer.notifiers) + (element - GetStart().item);
+			return { element, notifier };
+		}
+		else
+		{
+			UnbatchedBufferElement* element = m_readPosUnbatched.fetch_add(count, std::memory_order_acq_rel);
+			return { element, &element->item, &element->notifier };
+		}
 	}
 
 	/**
@@ -477,16 +647,32 @@ public:
 	 */
 	inline BufferElement GetForWrite()
 	{
-		t_ElementType* element = m_writePos.fetch_add(1, std::memory_order_acq_rel);
-		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
-		return { element, notifier };
+		if constexpr (t_EnableBatch)
+		{
+			t_ElementType* element = m_writePos.fetch_add(1, std::memory_order_acq_rel);
+			std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_buffer.notifiers) + (element - GetStart().item);
+			return { element, notifier };
+		}
+		else
+		{
+			UnbatchedBufferElement* element = m_writePosUnbatched.fetch_add(1, std::memory_order_acq_rel);
+			return { element, &element->item, &element->notifier };
+		}
 	}
 
 	inline BufferElement GetBatchForWrite(ssize_t count)
 	{
-		t_ElementType* element = m_writePos.fetch_add(count, std::memory_order_acq_rel);
-		std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_notifiers) + (element - GetStart().item);
-		return { element, notifier };
+		if constexpr (t_EnableBatch)
+		{
+			t_ElementType* element = m_writePos.fetch_add(count, std::memory_order_acq_rel);
+			std::atomic<typename BufferElement::NotifierType>* notifier = reinterpret_cast<std::atomic<typename BufferElement::NotifierType>*>(m_buffer.notifiers) + (element - GetStart().item);
+			return { element, notifier };
+		}
+		else
+		{
+			UnbatchedBufferElement* element = m_writePosUnbatched.fetch_add(count, std::memory_order_acq_rel);
+			return { element, &element->item, &element->notifier };
+		}
 	}
 
 	/**
@@ -497,7 +683,14 @@ public:
 	 */
 	inline BufferElement const GetEnd() const
 	{
-		return { m_end, nullptr };
+		if constexpr (t_EnableBatch)
+		{
+			return { m_end, nullptr };
+		}
+		else
+		{
+			return { m_endUnbatched, nullptr, nullptr };
+		}
 	}
 
 	/**
@@ -508,7 +701,14 @@ public:
 	*/
 	inline BufferElement const GetStart()
 	{
-		return { reinterpret_cast<t_ElementType*>(m_buffer), nullptr };
+		if constexpr (t_EnableBatch)
+		{
+			return { reinterpret_cast<t_ElementType*>(m_buffer.elements), nullptr };
+		}
+		else
+		{
+			return { reinterpret_cast<UnbatchedBufferElement*>(m_buffer.unbatchedBuffer), nullptr };
+		}
 	}
 
 	/**
@@ -566,11 +766,25 @@ private:
 	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_refCount;
 	alignas(QAC_CACHELINE_SIZE) std::atomic<t_ElementType*> m_readPos;
 	alignas(QAC_CACHELINE_SIZE) std::atomic<t_ElementType*> m_writePos;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<UnbatchedBufferElement*> m_readPosUnbatched;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<UnbatchedBufferElement*> m_writePosUnbatched;
 	alignas(QAC_CACHELINE_SIZE) int64_t m_generation{ 0 };
 
-	char m_buffer[t_BlockSize * sizeof(t_ElementType)];
-	char m_notifiers[t_BlockSize * sizeof(std::atomic<typename BufferElement::NotifierType>)];
+	// Separate memory layouts for batched vs. unbatched operations.
+	// Batched operations benefit from elements being contiguous without notifiers interleaving
+	// because that allows batch push to be performed using a memcpy for trivially copyable types.
+	// Unbatched operations benefit from elements and their notifiers being colocated in memory.
+	union
+	{
+		char unbatchedBuffer[t_BlockSize * sizeof(UnbatchedBufferElement)];
+		struct
+		{
+			char elements[t_BlockSize * sizeof(t_ElementType)];
+			char notifiers[t_BlockSize * sizeof(std::atomic<typename BufferElement::NotifierType>)];
+		};
+	} m_buffer;
 	t_ElementType* const m_end;
+	UnbatchedBufferElement* const m_endUnbatched;
 };
 
 /**
@@ -583,8 +797,8 @@ private:
 template <typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
 struct QAC::ReadReservationTicket
 {
-	detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>* buffer{ nullptr };
-	typename detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>::BufferElement ptr{ nullptr, nullptr };
+	detail::Buffer<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>* buffer{ nullptr };
+	typename detail::Buffer<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::BufferElement ptr{ nullptr, nullptr };
 	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>* queue{ nullptr };
 
 	ReadReservationTicket()
@@ -765,7 +979,7 @@ class alignas(QAC_CACHELINE_SIZE) QAC::ConcurrentQueue
 {
 public:
 	using ReadReservationTicket = QAC::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
-	using Buffer = QAC::detail::Buffer<t_ElementType, t_BlockSize, t_EnableIdleSleep>;
+	using Buffer = QAC::detail::Buffer<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>;
 
 	friend struct QAC::ReadReservationTicket<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>;
 
@@ -1335,6 +1549,7 @@ public:
 
 			return true;
 		}
+		m_contentionSplitter.fetch_add(1, std::memory_order_relaxed);
 		ticket.ptr = element;
 		return false;
 	}
@@ -1783,6 +1998,7 @@ protected:
 	alignas(QAC_CACHELINE_SIZE) detail::ReservationTicketSubQueue<ReadReservationTicket, t_AllocatorType> m_subQueue;
 	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_failedReads;
 	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_contentionSplitter;
 	alignas(QAC_CACHELINE_SIZE) t_AllocatorType<Buffer> m_allocator;
 };
 
@@ -1991,6 +2207,7 @@ public:
 		}
 		ticket.ptr = element;
 		ticket.generation = writeGeneration;
+		m_writeContentionSplitter.fetch_add(1, std::memory_order_relaxed);
 		return false;
 	}
 
@@ -2041,6 +2258,7 @@ public:
 		}
 		ticket.ptr = element;
 		ticket.generation = writeGeneration;
+		m_writeContentionSplitter.fetch_add(1, std::memory_order_relaxed);
 		return false;
 	}
 
@@ -2168,6 +2386,7 @@ public:
 		}
 		ticket.ptr = element;
 		ticket.generation = readGeneration;
+		m_readContentionSplitter.fetch_add(1, std::memory_order_relaxed);
 		return false;
 	}
 
@@ -2805,5 +3024,7 @@ private:
 	alignas(QAC_CACHELINE_SIZE) detail::ReservationTicketSubQueue<WriteReservationTicket, t_AllocatorType> m_writeSubQueue;
 	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_failedWrites;
 	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_outstanding;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_writeContentionSplitter;
+	alignas(QAC_CACHELINE_SIZE) std::atomic<ssize_t> m_readContentionSplitter;
 	alignas(QAC_CACHELINE_SIZE) bool pad;
 };
