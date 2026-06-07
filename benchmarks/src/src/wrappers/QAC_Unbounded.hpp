@@ -3,7 +3,7 @@
 #include "../../../../include/QAC/ConcurrentQueue.hpp"
 #include "../QueueWrapper.hpp"
 #include <thread>
-#include <semaphore>
+#include "../util/Semaphore.hpp"
 
 #define HAS_QAC_UNBOUNDED
 
@@ -66,7 +66,7 @@ class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatc
 public:
 	QueueWrapper()
 		: m_queue()
-		, m_semaphore(0)
+		, m_semaphore()
 	{
 	}
 
@@ -76,7 +76,7 @@ public:
 		{
 			t_ElementType data = t_ElementType(offset + i);
 			m_queue.Push(data);
-			m_semaphore.release();
+			m_semaphore.Notify();
 		}
 	}
 	void dequeue(size_t nElements, int tid)
@@ -90,7 +90,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			m_semaphore.acquire();
+			m_semaphore.Wait();
 			while (!m_queue.TryPop(data, ticket)) {}
 #ifdef VERIFY
 			localValues[data] += 1;
@@ -119,7 +119,7 @@ public:
 	}
 private:
 	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
-	std::counting_semaphore<benchmarkConfig::numElements<t_ElementType>::valueSingle> m_semaphore;
+	Semaphore m_semaphore;
 };
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, size_t t_BatchSize, template<typename> typename t_AllocatorType>

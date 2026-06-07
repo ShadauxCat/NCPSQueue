@@ -1,7 +1,7 @@
 #pragma once
 #include <concurrentqueue/concurrentqueue.h>
 #include <concurrentqueue/blockingconcurrentqueue.h>
-#include <semaphore>
+#include "../util/Semaphore.hpp"
 
 #include "../QueueWrapper.hpp"
 
@@ -80,7 +80,7 @@ class QueueWrapper<MoodyCamelWithSize<t_ElementType, t_Size>, TicketType::SEMAPH
 public:
 	QueueWrapper()
 		: m_queue(t_Size)
-		, m_semaphore(0)
+		, m_semaphore()
 	{
 	}
 
@@ -92,7 +92,7 @@ public:
 		{
 			t_ElementType data = t_ElementType(offset + i);
 			while (!m_queue.enqueue(ptok, data)) {};
-			m_semaphore.release();
+			m_semaphore.Notify();
 		}
 	}
 	void dequeue(size_t nElements, int tid)
@@ -105,7 +105,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			m_semaphore.acquire();
+			m_semaphore.Wait();
 			while (!m_queue.try_dequeue(ctok, data)) {};
 #ifdef VERIFY
 			localValues[data] += 1;
@@ -133,7 +133,7 @@ public:
 	}
 private:
 	moodycamel::ConcurrentQueue<t_ElementType> m_queue;
-	std::counting_semaphore<benchmarkConfig::numElements<t_ElementType>::valueSingle> m_semaphore;
+	Semaphore m_semaphore;
 };
 
 template<typename t_ElementType, size_t t_Size>
