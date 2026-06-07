@@ -2,6 +2,7 @@
 
 #include "../../../../include/QAC/ConcurrentQueue.hpp"
 #include "../QueueWrapper.hpp"
+#include <semaphore>
 
 #define HAS_QAC_BOUNDED
 
@@ -65,6 +66,72 @@ public:
 	}
 private:
 	QAC::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>* m_queue;
+};
+
+template<typename t_ElementType, size_t t_NumElements, bool t_EnableBatch, bool t_EnableIdleSleep>
+class QueueWrapper<QAC::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>, TicketType::SEMAPHORE>
+{
+public:
+	QueueWrapper()
+		: m_queue(new QAC::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>())
+		, m_semaphore(0)
+	{}
+
+	~QueueWrapper()
+	{
+		delete m_queue;
+	}
+
+	void enqueue(size_t nElements, size_t offset, int tid)
+	{
+		QAC::BoundedWriteReservationTicket<t_ElementType> ticket;
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			t_ElementType data = t_ElementType(offset + i);
+			while (!m_queue->TryPush(data, ticket)) {};
+			m_semaphore.release();
+		}
+	}
+	void dequeue(size_t nElements, int tid)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		QAC::BoundedReadReservationTicket<t_ElementType> ticket;
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_semaphore.acquire();
+			while (!m_queue->TryPop(data, ticket)) {};
+#ifdef VERIFY
+			localValues[data] += 1;
+#endif
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements, int tid)
+	{
+		QAC::BoundedReadReservationTicket<t_ElementType> ticket;
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue->TryPop(data, ticket);
+		}
+	}
+private:
+	QAC::ConcurrentBoundedQueue<t_ElementType, t_NumElements, t_EnableBatch, t_EnableIdleSleep>* m_queue;
+	std::counting_semaphore<benchmarkConfig::numElements<t_ElementType>::valueSingle> m_semaphore;
 };
 
 template<typename t_ElementType, size_t t_NumElements, bool t_EnableBatch, bool t_EnableIdleSleep>

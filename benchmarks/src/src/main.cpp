@@ -122,6 +122,12 @@ struct QAC_QueueSize<MoodyCamelWithSize<t_ElementType, t_Size>>
 {
 	static constexpr size_t size = t_Size;
 };
+
+template <typename t_ElementType, size_t t_Size>
+struct QAC_QueueSize<BlockingMoodyCamelWithSize<t_ElementType, t_Size>>
+{
+	static constexpr size_t size = t_Size;
+};
 #endif
 
 template<typename t_QueueType>
@@ -852,6 +858,7 @@ void RunTestsOnElementType()
 		{
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 8192>, TicketType::PERSISTENT>();
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 8192>, TicketType::NONE>();
+			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 8192>, TicketType::SEMAPHORE>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
@@ -868,6 +875,7 @@ void RunTestsOnElementType()
 		{
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 32768>, TicketType::PERSISTENT>();
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 32768>, TicketType::NONE>();
+			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 32768>, TicketType::SEMAPHORE>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
@@ -881,17 +889,21 @@ void RunTestsOnElementType()
 	{
 		RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::PERSISTENT>();
 		RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::NONE>();
+		if constexpr (benchmarkConfig::moodyCamelFullSet || benchmarkConfig::moodyCamelFullSet64k)
+		{
+			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::SEMAPHORE>();
+		}
 	}
 	if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 	{
-		if constexpr (benchmarkConfig::moodyCamelFullSet)
+		if constexpr (benchmarkConfig::moodyCamelFullSet || benchmarkConfig::moodyCamelFullSet64k)
 		{
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 1>();
 		}
 		RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 10>();
 		RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 100>();
 		RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 1000>();
-		if constexpr (benchmarkConfig::moodyCamelFullSet)
+		if constexpr (benchmarkConfig::moodyCamelFullSet || benchmarkConfig::moodyCamelFullSet64k)
 		{
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCH, 1>();
 		}
@@ -905,6 +917,7 @@ void RunTestsOnElementType()
 		{
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 131072>, TicketType::PERSISTENT>();
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 131072>, TicketType::NONE>();
+			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, 131072>, TicketType::SEMAPHORE>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
@@ -921,6 +934,7 @@ void RunTestsOnElementType()
 		{
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle>, TicketType::PERSISTENT>();
 			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle>, TicketType::NONE>();
+			RunTestsOnQueueType<t_ElementType, MoodyCamelWithSize<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle>, TicketType::SEMAPHORE>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
@@ -953,6 +967,10 @@ void RunTestsOnElementType()
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 8192>, TicketType::BATCH, 100>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 8192>, TicketType::BATCH, 1000>();
 		}
+	}
+
+	if constexpr (benchmarkConfig::moodyCamelFullSet || benchmarkConfig::moodyCamelFullSet64k)
+	{
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 32768>, TicketType::PERSISTENT>();
@@ -965,6 +983,9 @@ void RunTestsOnElementType()
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 32768>, TicketType::BATCH, 100>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 32768>, TicketType::BATCH, 1000>();
 		}
+	}
+	if constexpr (benchmarkConfig::moodyCamelFullSet || benchmarkConfig::moodyCamelFullSet64k)
+	{
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::PERSISTENT>();
@@ -972,21 +993,18 @@ void RunTestsOnElementType()
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
-			if constexpr (benchmarkConfig::moodyCamelFullSet)
-			{
-				RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 1>();
-			}
+			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 1>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 10>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 100>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCHWITHTOKEN, 1000>();
-			if constexpr (benchmarkConfig::moodyCamelFullSet)
-			{
-				RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCH, 1>();
-			}
+			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCH, 1>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCH, 10>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCH, 100>();
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 65536>, TicketType::BATCH, 1000>();
 		}
+	}
+	if constexpr (benchmarkConfig::moodyCamelFullSet)
+	{
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, BlockingMoodyCamelWithSize<t_ElementType, 131072>, TicketType::PERSISTENT>();
@@ -1030,6 +1048,7 @@ void RunTestsOnElementType()
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, false>, TicketType::EPHEMERAL>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, false>, TicketType::NONE>();
+			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, false>, TicketType::SEMAPHORE>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, false>, TicketType::WAIT>();
 		}
 	}
@@ -1056,9 +1075,6 @@ void RunTestsOnElementType()
 		if constexpr (benchmarkConfig::qacFullSet)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, false>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, false>, TicketType::EPHEMERAL>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, false>, TicketType::NONE>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, false>, TicketType::WAIT>();
 		}
 	}
 
@@ -1067,27 +1083,16 @@ void RunTestsOnElementType()
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, true>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, true>, TicketType::EPHEMERAL>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, true>, TicketType::NONE>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, false, true>, TicketType::WAIT>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCH, 1>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCH, 10>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCH, 100>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCH, 1000>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCHWAIT, 1>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCHWAIT, 10>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCHWAIT, 100>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::BATCHWAIT, 1000>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::EPHEMERAL>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::NONE>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, 16384, true, true>, TicketType::WAIT>();
 		}
 	}
 
@@ -1101,6 +1106,7 @@ void RunTestsOnElementType()
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, false>, TicketType::EPHEMERAL>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, false>, TicketType::NONE>();
+			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, false>, TicketType::SEMAPHORE>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, false>, TicketType::WAIT>();
 		}
 	}
@@ -1128,9 +1134,6 @@ void RunTestsOnElementType()
 		if constexpr (benchmarkConfig::qacFullSet)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, false>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, false>, TicketType::EPHEMERAL>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, false>, TicketType::NONE>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, false>, TicketType::WAIT>();
 		}
 	}
 
@@ -1139,27 +1142,16 @@ void RunTestsOnElementType()
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, true>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, true>, TicketType::EPHEMERAL>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, true>, TicketType::NONE>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, true>, TicketType::WAIT>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 1>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 10>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 100>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 1000>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 1>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 10>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 100>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 1000>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, true>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, true>, TicketType::EPHEMERAL>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, true>, TicketType::NONE>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, true>, TicketType::WAIT>();
 		}
 	}
 #endif
@@ -1174,6 +1166,7 @@ void RunTestsOnElementType()
 		if constexpr (benchmarkConfig::qacFullSet)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, false, false>, TicketType::NONE>(false);
+			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, false, false>, TicketType::SEMAPHORE>(false);
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, false, false>, TicketType::WAIT>(false);
 		}
 	}
@@ -1201,8 +1194,6 @@ void RunTestsOnElementType()
 		if constexpr (benchmarkConfig::qacFullSet)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::PERSISTENT>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::NONE>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, false>, TicketType::WAIT>(false);
 		}
 	}
 
@@ -1212,25 +1203,16 @@ void RunTestsOnElementType()
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, false, true>, TicketType::PERSISTENT>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, false, true>, TicketType::NONE>(false);
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, false, true>, TicketType::WAIT>(false);
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 1>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 10>(false);
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 100>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCH, 1000>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 1>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 10>(false);
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 100>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::BATCHWAIT, 1000>(false);
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::PERSISTENT>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::NONE>(false);
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, 131072, true, true>, TicketType::WAIT>(false);
 		}
 	}
 
@@ -1241,6 +1223,7 @@ void RunTestsOnElementType()
 		if constexpr (benchmarkConfig::qacFullSet)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, false>, TicketType::NONE>();
+			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, false>, TicketType::SEMAPHORE>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, false>, TicketType::WAIT>();
 		}
 	}
@@ -1268,8 +1251,6 @@ void RunTestsOnElementType()
 		if constexpr (benchmarkConfig::qacFullSet)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, false>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, false>, TicketType::NONE>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, false>, TicketType::WAIT>();
 		}
 	}
 
@@ -1278,25 +1259,16 @@ void RunTestsOnElementType()
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, true>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, true>, TicketType::NONE>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, false, true>, TicketType::WAIT>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Batch) != 0)
 		{
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 1>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 10>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 100>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCH, 1000>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 1>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 10>();
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 100>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueBatch, true, true>, TicketType::BATCHWAIT, 1000>();
 		}
 		if constexpr ((benchmarkConfig::testType & TestType::Single) != 0)
 		{
 			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, true>, TicketType::PERSISTENT>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, true>, TicketType::NONE>();
-			RunTestsOnQueueType<t_ElementType, QAC::ConcurrentBoundedQueue<t_ElementType, benchmarkConfig::numElements<t_ElementType>::valueSingle, true, true>, TicketType::WAIT>();
 		}
 	}
 #endif

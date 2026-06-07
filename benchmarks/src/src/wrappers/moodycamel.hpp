@@ -1,7 +1,7 @@
 #pragma once
 #include <concurrentqueue/concurrentqueue.h>
 #include <concurrentqueue/blockingconcurrentqueue.h>
-
+#include <semaphore>
 
 #include "../QueueWrapper.hpp"
 
@@ -72,6 +72,68 @@ public:
 	}
 private:
 	moodycamel::ConcurrentQueue<t_ElementType> m_queue;
+};
+
+template<typename t_ElementType, size_t t_Size>
+class QueueWrapper<MoodyCamelWithSize<t_ElementType, t_Size>, TicketType::SEMAPHORE>
+{
+public:
+	QueueWrapper()
+		: m_queue(t_Size)
+		, m_semaphore(0)
+	{
+	}
+
+	void enqueue(size_t nElements, size_t offset, int tid)
+	{
+		moodycamel::ProducerToken ptok(m_queue);
+
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			t_ElementType data = t_ElementType(offset + i);
+			while (!m_queue.enqueue(ptok, data)) {};
+			m_semaphore.release();
+		}
+	}
+	void dequeue(size_t nElements, int tid)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		moodycamel::ConsumerToken ctok(m_queue);
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_semaphore.acquire();
+			while (!m_queue.try_dequeue(ctok, data)) {};
+#ifdef VERIFY
+			localValues[data] += 1;
+#endif
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements, int tid)
+	{
+		moodycamel::ConsumerToken ctok(m_queue);
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue.try_dequeue(ctok, data);
+		}
+	}
+private:
+	moodycamel::ConcurrentQueue<t_ElementType> m_queue;
+	std::counting_semaphore<benchmarkConfig::numElements<t_ElementType>::valueSingle> m_semaphore;
 };
 
 template<typename t_ElementType, size_t t_Size>
@@ -290,7 +352,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			m_queue.dequeue(ctok, data);
+			m_queue.wait_dequeue(ctok, data);
 #ifdef VERIFY
 			localValues[data] += 1;
 #endif
@@ -344,7 +406,7 @@ public:
 		t_ElementType data = t_ElementType();
 		for (size_t i = 0; i < nElements; ++i)
 		{
-			m_queue.try_dequeue(data);
+			m_queue.wait_dequeue(data);
 #ifdef VERIFY
 			localValues[data] += 1;
 #endif
@@ -405,7 +467,7 @@ public:
 		t_ElementType items[t_BatchSize];
 		while (totalRemaining > 0)
 		{
-			size_t count = m_queue.dequeue_bulk(items, std::min(t_BatchSize, totalRemaining));
+			size_t count = m_queue.wait_dequeue_bulk(items, std::min(t_BatchSize, totalRemaining));
 #ifdef VERIFY
 			for (size_t i = 0; i < count; ++i)
 			{
@@ -472,7 +534,7 @@ public:
 		t_ElementType items[t_BatchSize];
 		while (totalRemaining > 0)
 		{
-			size_t count = m_queue.try_dequeue_bulk(items, std::min(t_BatchSize, totalRemaining));
+			size_t count = m_queue.wait_dequeue_bulk(items, std::min(t_BatchSize, totalRemaining));
 #ifdef VERIFY
 			for (size_t i = 0; i < count; ++i)
 			{

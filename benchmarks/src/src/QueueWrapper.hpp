@@ -19,6 +19,7 @@ enum class TicketType
 	WAIT,
 	BATCHWAIT,
 	BATCHWITHTOKEN,
+	SEMAPHORE
 };
 
 enum class PointerQueuePolicy

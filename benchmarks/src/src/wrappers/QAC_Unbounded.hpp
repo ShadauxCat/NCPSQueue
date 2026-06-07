@@ -3,6 +3,7 @@
 #include "../../../../include/QAC/ConcurrentQueue.hpp"
 #include "../QueueWrapper.hpp"
 #include <thread>
+#include <semaphore>
 
 #define HAS_QAC_UNBOUNDED
 
@@ -57,6 +58,68 @@ public:
 	}
 private:
 	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+};
+
+template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, template<typename> typename t_AllocatorType>
+class QueueWrapper<QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep, t_AllocatorType>, TicketType::SEMAPHORE, 0, PointerQueuePolicy::None>
+{
+public:
+	QueueWrapper()
+		: m_queue()
+		, m_semaphore(0)
+	{
+	}
+
+	void enqueue(size_t nElements, size_t offset, int tid)
+	{
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			t_ElementType data = t_ElementType(offset + i);
+			m_queue.Push(data);
+			m_semaphore.release();
+		}
+	}
+	void dequeue(size_t nElements, int tid)
+	{
+#ifdef VERIFY
+		std::unordered_map<int, int> localValues;
+#endif
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
+		m_queue.InitializeReservationTicket(ticket);
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_semaphore.acquire();
+			while (!m_queue.TryPop(data, ticket)) {}
+#ifdef VERIFY
+			localValues[data] += 1;
+#endif
+		}
+#ifdef VERIFY
+		{
+			std::lock_guard<std::mutex> guard(valueLock);
+			for (auto& kvp : localValues)
+			{
+				values[kvp.first] += kvp.second;
+			}
+		}
+#endif
+	}
+	void dequeueEmpty(size_t nElements, int tid)
+	{
+		typename QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep>::ReadReservationTicket ticket;
+		m_queue.InitializeReservationTicket(ticket);
+
+		t_ElementType data = t_ElementType();
+		for (size_t i = 0; i < nElements; ++i)
+		{
+			m_queue.TryPop(data, ticket);
+		}
+	}
+private:
+	QAC::ConcurrentQueue<t_ElementType, t_BlockSize, t_EnableBatch, t_EnableIdleSleep> m_queue;
+	std::counting_semaphore<benchmarkConfig::numElements<t_ElementType>::valueSingle> m_semaphore;
 };
 
 template<typename t_ElementType, size_t t_BlockSize, bool t_EnableBatch, bool t_EnableIdleSleep, size_t t_BatchSize, template<typename> typename t_AllocatorType>

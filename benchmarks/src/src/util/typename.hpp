@@ -54,6 +54,9 @@ public:
 		case TicketType::NONE:
 			ret += " [No Tickets]";
 			break;
+		case TicketType::SEMAPHORE:
+			ret += " [Semaphore]";
+			break;
 		case TicketType::BATCH:
 		{
 			std::stringstream num;
@@ -105,6 +108,9 @@ struct TypeName<MoodyCamelWithSize<t_ElementType, t_Size>>
 		case TicketType::NONE:
 			ret += " [No Tokens]";
 			break;
+		case TicketType::SEMAPHORE:
+			ret += " [Semaphore]";
+			break;
 		case TicketType::BATCH:
 		{
 			std::stringstream num;
@@ -151,6 +157,9 @@ struct TypeName<BlockingMoodyCamelWithSize<t_ElementType, t_Size>>
 			break;
 		case TicketType::NONE:
 			ret += " [No Tokens]";
+			break;
+		case TicketType::SEMAPHORE:
+			ret += " [Semaphore]";
 			break;
 		case TicketType::BATCH:
 		{

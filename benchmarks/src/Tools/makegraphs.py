@@ -10,22 +10,25 @@ import argparse
 import os
 import re
 import collections
+import shutil
 
 parser = argparse.ArgumentParser()
 parser.add_argument("datafile", help="File containing output from QueueTests")
+parser.add_argument("outputdir", help="Directory to place output files")
 parser.add_argument("--greyscale", "-g", help="Output greyscale images", action="store_true")
 parser.add_argument("--comp-only", "-c", help="Skip individual charts and only output comparisons", action="store_true")
-parser.add_argument("--height", "-e", help="Specify image height", type=int, default=1080)
-parser.add_argument("--width", "-w", help="Specify image height", type=int, default=1920)
+parser.add_argument("--height", "-e", help="Specify image height", type=int, default=1080*1.5)
+parser.add_argument("--width", "-w", help="Specify image height", type=int, default=1920*1.5)
 parser.add_argument("--spline", "-s", help="Smooth line graphs", action="store_true")
 parser.add_argument("--no-singles", '-n', help="Exclude results with 1 producer and 1 consumer", action="store_true")
-parser.add_argument("--filter", "-f", help="Exclude types including this substring", nargs="*", action="extend", default=[])
-parser.add_argument("--neg-filter", "-F", help="Exclude types not including this substring", nargs="*", action="extend", default=[])
+parser.add_argument("--filter", "-f", help="Exclude types including this substring. OR relationships can be encoded with the | character.", nargs="*", action="extend", default=[])
+parser.add_argument("--neg-filter", "-F", help="Exclude types not including this substring. OR relationships can be encoded with the | character.", nargs="*", action="extend", default=[])
 parser.add_argument("--max-compare-cores", help="Maximum total cores to use in comparison graphs", default=0, type=int)
 parser.add_argument("--heatmap-compare", "-H", help="Generate comparisons against the stated heatmap (full output string)")
-parser.add_argument("--builtin-filter-batch-cmp", "-B", help="Run a batch comparison. Equivalent to --neg-filter='[Batch'", action="store_true")
-parser.add_argument("--builtin-filter-single-cmp", "-S", help="Run a single-item comparison. Equivalent to --filter='[Batch'", action="store_true")
+parser.add_argument("--builtin-filter-batch-cmp", "-B", help="Run a batch comparison. Equivalent to --neg-filter='[Batch' --neg-filter='[Blocking Batch'", action="store_true")
+parser.add_argument("--builtin-filter-single-cmp", "-S", help="Run a single-item comparison. Equivalent to --filter='[Batch' --filter='[Blocking Batch'", action="store_true")
 parser.add_argument("--builtin-filter-competitive-cmp", "-C", help="Run a competitive comparison, comparing only the best configurations for each queue. Does some more complex filtering to include only those items.", action="store_true")
+parser.add_argument("--symmetrical-only", help="Only output the comparative graph for the symmetrical case", action="store_true")
 args = parser.parse_args()
 
 locale.setlocale(locale.LC_ALL, '')
@@ -40,13 +43,15 @@ no_singles = args.no_singles
 
 if args.builtin_filter_batch_cmp:
 	args.neg_filter.append('[Batch')
+	args.neg_filter.append('[Blocking Batch')
 if args.builtin_filter_single_cmp:
 	args.filter.append('[Batch')
+	args.filter.append('[Blocking Batch')
 
 legendAttrs = dict(
 	font=dict(
 		family='sans-serif',
-		size=9,
+		size=14,
 		color='#000'
 	)
 )
@@ -150,6 +155,9 @@ batchMin = { "enqueue": 9999999999999, "dequeue": 9999999999999, "enq+deq": 9999
 singleMax = { "enqueue": 0, "dequeue": 0, "enq+deq": 0, "deq_empty": 0, "latency": 0 }
 singleMin = { "enqueue": 9999999999999, "dequeue": 9999999999999, "enq+deq": 9999999999999, "deq_empty": 9999999999999, "latency": 0 }
 
+singleWinners = {}
+batchWinners = {}
+
 maxProd = 0
 maxCon = 0
 
@@ -216,6 +224,35 @@ import re
 
 printed = set()
 
+def getPrintName(name):
+	printName = name.replace("moodycamel::ConcurrentQueue", "moodycamel")
+	printName = printName.replace("MoodyCamelWithSize", "moodycamel")
+	printName = printName.replace("QAC::ConcurrentQueue", "QAC")
+	printName = printName.replace("::ConcurrentBoundedQueue", "-bounded")
+	printName = printName.replace("ext_", "")
+	printName = printName.replace("::mpmc_bounded_queue", "")
+	printName = printName.replace("::detail::d2::concurrent_bounded_queue", "-bounded")
+	printName = printName.replace("::detail::d2::concurrent_queue", "")
+	printName = printName.replace("xenium::", "")
+	printName = printName.replace("long int", "int64_t")
+	printName = printName.replace("long long", "int64_t")
+	printName = printName.replace("__int64", "int64_t")
+	printName = printName.replace("<64>", "64")
+
+	printName = printName.replace("[Persistent Tickets]", "[PT]")
+	printName = printName.replace("Ephemeral Tickets", "ET")
+	printName = printName.replace("No Tickets", "NT")
+	printName = printName.replace("No Tokens", "NT")
+	#printName = printName.replace("Semaphore", "S")
+	printName = printName.replace("Batch With Tokens (", "BWT")
+	printName = printName.replace("With Tokens", "WT")
+	printName = printName.replace("Batch (", "B")
+	printName = printName.replace(")]", "]")
+	printName = printName.replace("+n", "+i")
+	printName = printName.replace("::BlockingConcurrentQueue", " [Blocking]")
+
+	return printName
+
 for line in text.splitlines():
 
 	if line.strip() == "":
@@ -263,15 +300,11 @@ for line in text.splitlines():
 				maxCon = max(maxCon, consumers)
 				
 			d = maxes.setdefault(name, { "enqueue": 0, "dequeue": 0, "enq+deq": 0, "deq_empty": 0, "latency": 0 })
-			d[type] = max(max_throughput, d[type])
-			if "[Batch" in name:
-				batchMax[type] = max(max_throughput, batchMax[type])
-			else:
-				singleMax[type] = max(max_throughput, singleMax[type])
-		
+			d[type] = max(throughput, d[type])
+
 			d = mins.setdefault(name, { "enqueue": 9999999999999, "dequeue": 9999999999999, "enq+deq": 9999999999999, "deq_empty": 9999999999999, "latency": 9999999999999 })
 			d[type] = min(min_throughput, d[type])
-			if "[Batch" in name:
+			if "[Batch" in name or "[Blocking Batch" in name:
 				batchMin[type] = min(min_throughput, batchMin[type])
 			else:
 				singleMin[type] = min(min_throughput, singleMin[type])
@@ -332,20 +365,13 @@ patternIdx = -1
 patternLock = {}
 N = 0
 
-def getPrintName(name):
-	printName = name.replace("moodycamel::ConcurrentQueue", "moodycamel")
-	printName = printName.replace("MoodyCamelWithSize", "moodycamel")
-	printName = printName.replace("QAC::ConcurrentQueue", "QAC")
-	printName = printName.replace("::ConcurrentBoundedQueue", "-bounded")
-	printName = printName.replace("ext_", "")
-	printName = printName.replace("::mpmc_bounded_queue", "")
-	printName = printName.replace("::detail::d2::concurrent_bounded_queue", "-bounded")
-	printName = printName.replace("::detail::d2::concurrent_queue", "")
-	printName = printName.replace("xenium::", "")
-	return printName
-
 def print_graphs(name, d, minVal, maxVal, forCompare = False):
 	printName = getPrintName(name)
+	filterName = name.replace("long int", "int64_t")
+	filterName = filterName.replace("long long", "int64_t")
+	filterName = filterName.replace("__int64", "int64_t")
+	filterName = filterName.replace("<64>", "64")
+	printed = False
 	for type, listOfDatapoints in d.items():
 		keys = []
 		vals = []
@@ -360,11 +386,23 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 		if not forCompare:
 			good = True
 			for filter in args.filter:
-				if filter in name:
+				filters = filter.split("|")
+				foundAny = False
+				for oneFilter in filters:
+					if oneFilter in filterName:
+						foundAny = True
+						break
+				if foundAny:
 					good = False
 					break
 			for filter in args.neg_filter:
-				if filter not in name:
+				filters = filter.split("|")
+				foundAny = False
+				for oneFilter in filters:
+					if oneFilter in filterName:
+						foundAny = True
+						break
+				if not foundAny:
 					good = False
 					break
 			if not good:
@@ -377,7 +415,7 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 					size = sizeCheck[1].split(")")[0]
 					size = size.split(",")[0]
 					baseName += "-" + size
-				if "+b" in name and "[Batch" not in name:
+				if "+b" in name and "[Batch" not in name and "[Blocking Batch" not in name:
 					noComp = True
 				elif "+n" in name or "[Ephemeral Tickets]" in name or "[Dynamic]" in name or "[No Tickets]" in name:
 					noComp = True
@@ -386,6 +424,11 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 				if noComp:
 					continue
 
+		if not printed and not forCompare:
+			sys.stdout.write(f"{printName}")
+			sys.stdout.flush()
+			printed = True
+
 		if printName not in patternLock:
 			global patternIdx
 			patternIdx += 1
@@ -393,11 +436,14 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 
 		pattern = patternLock[printName]
 
-		dir = os.path.join("gen_html", type.replace("+", "_"), elementType)
+		# dir = os.path.join(args.outputdir, os.path.splitext(os.path.basename(args.datafile))[0], "gen_html", type.replace("+", "_"), elementType)
+		# if args.heatmap_compare:
+		# 	dir = os.path.join(dir, "VS " + args.heatmap_compare)
+		# if not os.path.exists(dir):
+		# 	os.makedirs(dir)
+		imgDir = os.path.join(args.outputdir, os.path.splitext(os.path.basename(args.datafile))[0], elementType)
 		if args.heatmap_compare:
-			dir = os.path.join(dir, "VS " + args.heatmap_compare)
-		if not os.path.exists(dir):
-			os.makedirs(dir)
+			imgDir = os.path.join(imgDir, "VS " + args.heatmap_compare)
 
 		if type == "latency":
 			for dataPoints in listOfDatapoints:
@@ -496,11 +542,17 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 					data = [trace],
 					layout = layout
 				)
-				plotly.offline.plot(
-					fig,
-					filename = os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-").replace("<64>", ""), type, elementType)),
-					image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-").replace("<64>", ""), type,elementType), image_height=imageHeight, image_width=imageWidth
-				)
+				# plotly.offline.plot(
+				# 	fig,
+				# 	filename = os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-").replace("<64>", ""), type, elementType)),
+				# 	image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-").replace("<64>", ""), type,elementType), image_height=imageHeight, image_width=imageWidth
+				# )
+				sanitizedName = printName.replace("::", "-").replace("<64>", "");
+				if not os.path.exists(os.path.join(imgDir, sanitizedName)):
+					os.makedirs(os.path.join(imgDir, sanitizedName))
+				fig.write_image(os.path.join(imgDir, sanitizedName, '{}.png'.format(type)), width=imageWidth, height=imageHeight)
+				sys.stdout.write(".")
+				sys.stdout.flush()
 		elif type == "enq+deq":
 			colors = []
 			global heatmap
@@ -549,41 +601,72 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 			global compareHeatmap
 			
 			for dataPoints in listOfDatapoints:
+				if "QAC" not in name or ("10000000" not in name and "5000000" not in name):
+					producers = dataPoints[0]
+					consumers = dataPoints[1]
+					throughput = dataPoints[2]
+					if "[Batch" in name:
+						batchMax[type] = max(throughput, batchMax[type])
+
+						batchSize = int(re.search(r"\[Batch[^]]+\((\d+)\)]", name).group(1))
+
+						winner = batchWinners.setdefault(elementType, {}).setdefault(batchSize, {}).setdefault(producers, {}).setdefault(consumers, [])
+						winner.append([getPrintName(name), throughput])
+					elif "[Blocking Batch" in name:
+						batchMax[type] = max(throughput, batchMax[type])
+
+						batchSize = int(re.search(r"\[Blocking Batch[^]]+\((\d+)\)]", name).group(1))
+
+						winner = batchWinners.setdefault(elementType, {}).setdefault(batchSize, {}).setdefault(producers, {}).setdefault(consumers, [])
+						winner.append([getPrintName(name), throughput])
+					else:
+						singleMax[type] = max(throughput, singleMax[type])
+
+						winner = singleWinners.setdefault(elementType, {}).setdefault(producers, {}).setdefault(consumers, [])
+						winner.append([getPrintName(name), throughput])
+
 				if dataPoints[0] + dataPoints[1] <= cores:
 					if dataPoints[0] == dataPoints[1]:
 						symmetrics.append(dataPoints[2])
-						symMin.append(dataPoints[2] - dataPoints[3])
-						symMax.append(dataPoints[4] - dataPoints[2])
+						if dataPoints[2] is not None:
+							symMin.append(dataPoints[2] - dataPoints[3])
+							symMax.append(dataPoints[4] - dataPoints[2])
 						symText.append(FormatLargeNumber(dataPoints[2]))
 					if dataPoints[0] == N/2:
 						consNHalfProducers.append(dataPoints[2])
-						cNHpMin.append(dataPoints[2] - dataPoints[3])
-						cNHpMax.append(dataPoints[4] - dataPoints[2])
+						if dataPoints[2] is not None:
+							cNHpMin.append(dataPoints[2] - dataPoints[3])
+							cNHpMax.append(dataPoints[4] - dataPoints[2])
 						cNHpText.append(FormatLargeNumber(dataPoints[2]))
 					if dataPoints[1] == N/2:
 						prodsNHalfConsumers.append(dataPoints[2])
-						pNHcMin.append(dataPoints[2] - dataPoints[3])
-						pNHcMax.append(dataPoints[4] - dataPoints[2])
+						if dataPoints[2] is not None:
+							pNHcMin.append(dataPoints[2] - dataPoints[3])
+							pNHcMax.append(dataPoints[4] - dataPoints[2])
 						pNHcText.append(FormatLargeNumber(dataPoints[2]))
 				if dataPoints[0] == N:
 					consNProducers.append(dataPoints[2])
-					cNpMin.append(dataPoints[2] - dataPoints[3])
-					cNpMax.append(dataPoints[4] - dataPoints[2])
+					if dataPoints[2] is not None:
+						cNpMin.append(dataPoints[2] - dataPoints[3])
+						cNpMax.append(dataPoints[4] - dataPoints[2])
 					cNpText.append(FormatLargeNumber(dataPoints[2]))
 				if dataPoints[1] == N:
 					prodsNConsumers.append(dataPoints[2])
-					pNcMin.append(dataPoints[2] - dataPoints[3])
-					pNcMax.append(dataPoints[4] - dataPoints[2])
+					if dataPoints[2] is not None:
+						pNcMin.append(dataPoints[2] - dataPoints[3])
+						pNcMax.append(dataPoints[4] - dataPoints[2])
 					pNcText.append(FormatLargeNumber(dataPoints[2]))
 				if dataPoints[0] == 1 and dataPoints[1] <= cores:
 					cons1Producer.append(dataPoints[2])
-					c1pMin.append(dataPoints[2] - dataPoints[3])
-					c1pMax.append(dataPoints[4] - dataPoints[2])
+					if dataPoints[2] is not None:
+						c1pMin.append(dataPoints[2] - dataPoints[3])
+						c1pMax.append(dataPoints[4] - dataPoints[2])
 					c1pText.append(FormatLargeNumber(dataPoints[2]))
 				if dataPoints[1] == 1 and dataPoints[0] <= cores:
 					prods1Consumer.append(dataPoints[2])
-					p1cMin.append(dataPoints[2] - dataPoints[3])
-					p1cMax.append(dataPoints[4] - dataPoints[2])
+					if dataPoints[2] is not None:
+						p1cMin.append(dataPoints[2] - dataPoints[3])
+						p1cMax.append(dataPoints[4] - dataPoints[2])
 					p1cText.append(FormatLargeNumber(dataPoints[2]))
 
 				keys.append(dataPoints[0])
@@ -598,9 +681,12 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 					
 				heatmap[dataPoints[1]][dataPoints[0]] = dataPoints[2]
 				if args.heatmap_compare and not forCompare:
-					heatmap[dataPoints[1]][dataPoints[0]] -= compareHeatmap[dataPoints[1]][dataPoints[0]]
-					heatmapMin = min(heatmapMin, heatmap[dataPoints[1]][dataPoints[0]])
-					heatmapMax = max(heatmapMax, heatmap[dataPoints[1]][dataPoints[0]])
+					if compareHeatmap[dataPoints[1]][dataPoints[0]] is None:
+						heatmap[dataPoints[1]][dataPoints[0]] = None
+					else:
+						heatmap[dataPoints[1]][dataPoints[0]] -= compareHeatmap[dataPoints[1]][dataPoints[0]]
+						heatmapMin = min(heatmapMin, heatmap[dataPoints[1]][dataPoints[0]])
+						heatmapMax = max(heatmapMax, heatmap[dataPoints[1]][dataPoints[0]])
 					heatmaptxt[dataPoints[1]][dataPoints[0]] = "diff: {} op/s".format(FormatLargeNumber(heatmap[dataPoints[1]][dataPoints[0]]))
 				else:
 					heatmaptxt[dataPoints[1]][dataPoints[0]] = "throughput: {} op/s".format(FormatLargeNumber(dataPoints[2]))
@@ -775,21 +861,30 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 
 				global colorscale
 				colorscale = [
-					[0.0, 'rgb(255,127,255)'],
-					[getPos(-0.1), 'rgb(127,31,63)'],
+					[0.0, 'rgb(255,0,0)'],
+					#[getPos(1.0), 'rgb(165,0,38)']
+					[getPos(-0.9), 'rgb(215,48,39)'],
+					[getPos(-0.8), 'rgb(244,109,67)'],
+					[getPos(-0.7), 'rgb(253,174,97)'],
+					[getPos(-0.6), 'rgb(254,224,144)'],
+					[getPos(-0.5), 'rgb(248,224,243)'],
+					[getPos(-0.4), 'rgb(233,171,217)'],
+					[getPos(-0.3), 'rgb(209,116,173)'],
+					[getPos(-0.2), 'rgb(180,69,117)'],
+					[getPos(-0.1), 'rgb(149,49,54)'],
 					[zeroPct, 'rgb(0,0,0)'],
 					[getPos(0.1), 'rgb(49,54,149)'],
 					[getPos(0.2), 'rgb(69,117,180)'],
 					[getPos(0.3), 'rgb(116,173,209)'],
 					[getPos(0.4), 'rgb(171,217,233)'],
 					[getPos(0.5), 'rgb(224,243,248)'],
-					[getPos(0.6), 'rgb(254,224,144)'],
-					[getPos(0.7), 'rgb(253,174,97)'],
-					[getPos(0.8), 'rgb(244,109,67)'],
-					[getPos(0.9), 'rgb(215,48,39)'],
-					[getPos(1.0), 'rgb(165,0,38)']
+					[getPos(0.6), 'rgb(224,254,144)'],
+					[getPos(0.7), 'rgb(174,253,97)'],
+					[getPos(0.8), 'rgb(109,244,67)'],
+					[getPos(0.9), 'rgb(48,215,39)'],
+					[getPos(1.0), 'rgb(0,165,38)']
 				]
-				zmin = -batchMax[type] if "[Batch" in printName else -singleMax[type]
+				zmin = -batchMax[type] if ("[Batch" in printName or "[Blocking Batch" in printName) else -singleMax[type]
 
 			heatmaptext = []
 			for items in heatmap:
@@ -803,7 +898,7 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 				colorscale=colorscale,
 				zsmooth='best',
 				zmin=zmin,
-				zmax=batchMax[type] if "[Batch" in printName else singleMax[type],
+				zmax=batchMax[type] if ("[Batch" in printName or "[Blocking Batch" in printName) else singleMax[type],
 				#texttemplate="%{z:.4s}"
 				text=heatmaptext,
 				texttemplate="%{text}",
@@ -814,7 +909,7 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 				name = 'Overload line',
 				mode = 'lines',
 				line=dict(
-					color = 'rgb(0, 0, 0)'
+					color = 'rgb(127, 127, 127)'
 				)
 			)
 
@@ -845,17 +940,24 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 				layout = layout
 			)
 			if not compOnly:
+				sanitizedName = printName.replace("::", "-").replace("<64>", "");
+				if not os.path.exists(os.path.join(imgDir, sanitizedName)):
+					os.makedirs(os.path.join(imgDir, sanitizedName))
+
 				add = ""
 				if args.heatmap_compare:
 					add = "_vs_" + args.heatmap_compare.replace("::", "-").replace("<64>", "")
-				plotly.offline.plot(
-					fig,
-					filename = os.path.join(dir, printName.replace("::", "-").replace("<64>", "") + "_" + get_name(type).replace("+", "_") + add + '_heatmap.html'),
-					image='png', image_filename=printName.replace("::", "-").replace("<64>", "") + "_" + elementType + add + '_heatmap', image_height=imageHeight, image_width=imageWidth
-				)
+				# plotly.offline.plot(
+				# 	fig,
+				# 	filename = os.path.join(dir, printName.replace("::", "-").replace("<64>", "") + "_" + get_name(type).replace("+", "_") + add + '_heatmap.html'),
+				# 	image='png', image_filename=printName.replace("::", "-").replace("<64>", "") + "_" + elementType + add + '_heatmap', image_height=imageHeight, image_width=imageWidth
+				# )
+				fig.write_image(os.path.join(imgDir, sanitizedName, 'heatmap.png'), width=imageWidth, height=imageHeight)
+				sys.stdout.write(".")
+				sys.stdout.flush()
 				#time.sleep(5)
 				if not args.heatmap_compare:
-					def plot(keys, vals, texts, title, axisTitle, fileName):
+					def plot(keys, vals, texts, title, axisTitle, fileName, inSlices = True):
 
 						trace = plotly.graph_objs.Scatter(
 							x=keys,
@@ -885,15 +987,26 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 							data=[trace],
 							layout=layout
 						)
-						plotly.offline.plot(
-							fig,
-							filename=os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-").replace("<64>", ""), fileName, elementType)),
-							image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-").replace("<64>", ""), fileName, elementType), image_height=imageHeight,
-							image_width=imageWidth
-						)
+						# plotly.offline.plot(
+						# 	fig,
+						# 	filename=os.path.join(dir, '{}_{}_{}.html'.format(printName.replace("::", "-").replace("<64>", ""), fileName, elementType)),
+						# 	image='png', image_filename='{}_{}_{}'.format(printName.replace("::", "-").replace("<64>", ""), fileName, elementType), image_height=imageHeight,
+						# 	image_width=imageWidth
+						# )
+
+						baseDir = os.path.join(imgDir, sanitizedName)
+						if inSlices:
+							baseDir = os.path.join(baseDir, "concurrent_slices")
+						if not os.path.exists(baseDir):
+							os.makedirs(baseDir)
+						fig.write_image(
+							os.path.join(baseDir, '{}.png'.format(fileName)),
+							width=imageWidth, height=imageHeight)
+						sys.stdout.write(".")
+						sys.stdout.flush()
 
 					compKeys = [x * 2 for x in range(1, len(symmetrics) + 1)]
-					plot(compKeys, symmetrics, symText, "Concurrent Throughput (Symmetrical Threads) ({} <{}>)".format(printName, elementType), "Threads (1/2 consumer, 1/2 producer)", "symmetric")
+					plot(compKeys, symmetrics, symText, "Concurrent Throughput (Symmetrical Threads) ({} <{}>)".format(printName, elementType), "Threads (1/2 consumer, 1/2 producer)", "symmetric", False)
 					compKeys = [x for x in range(1,len(prods1Consumer)+1)]
 					plot(compKeys, prods1Consumer, p1cText, "Throughput By Producer Count (1 Consumer) ({} <{}>)".format(printName, elementType), "Producer Threads", "prods1consumer")
 					compKeys = [x for x in range(1,len(prodsNConsumers)+1)]
@@ -907,15 +1020,39 @@ def print_graphs(name, d, minVal, maxVal, forCompare = False):
 					compKeys = [x for x in range(1,len(consNHalfProducers)+1)]
 					plot(compKeys, consNHalfProducers, cNHpText, "Throughput By Consumer Count ({} Producers) ({} <{}>)".format(N/2, printName, elementType), "Consumer Threads", "consNHalfproducers")
 
+				# input("Press any key once files have finished downloading.")
+				# for filename in os.listdir(downloadsFolder):
+				# 	if filename not in priorDownloadFiles:
+				# 		shutil.move(os.path.join(downloadsFolder, filename), os.path.join(imgDir, filename))
+	if printed:
+		sys.stdout.write("\n")
+
 if args.heatmap_compare:
 	for key, value in data.items():
 		print_graphs(key, value, mins[key], maxes[key], True)
+
 	if compareHeatmap is None:
 		print("Invalid comparison. Choices are:")
 		for key, value in data.items():
 			printName = getPrintName(key)
 			print("    " + printName)
 		sys.exit(1)
+
+
+def get_download_path():
+    """Returns the default downloads path for linux or windows"""
+    if os.name == 'nt':
+        import winreg
+        sub_key = r'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders'
+        downloads_guid = '{374DE290-123F-4565-9164-39C4925E467B}'
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, sub_key) as key:
+            location = winreg.QueryValueEx(key, downloads_guid)[0]
+        return location
+    else:
+        return os.path.join(os.path.expanduser('~'), 'downloads')
+
+downloadsFolder = get_download_path()
+priorDownloadFiles = os.listdir(downloadsFolder)
 
 for key, value in data.items():
 	print_graphs(key, value, mins[key], maxes[key])
@@ -927,20 +1064,29 @@ for type in types:
 	if type not in symmetricData:
 		continue
 
-	dir = os.path.join("gen_html", "comp", type)
-	if not os.path.exists(dir):
-		os.makedirs(dir)
+	sys.stdout.write(f"Comp: {type}")
+	sys.stdout.flush()
+	#
+	# dir = os.path.join(args.outputdir, os.path.splitext(os.path.basename(args.datafile))[0], "gen_html", "comp", type)
+	# if not os.path.exists(dir):
+	# 	os.makedirs(dir)
+
+	imgDir = os.path.join(args.outputdir, os.path.splitext(os.path.basename(args.datafile))[0], "comp", type)
+	if not os.path.exists(imgDir):
+		os.makedirs(imgDir)
+
+	typeName = '<span style="color: {};">{}</span>'.format(typeColor, type)
 
 	annotations = [dict(
 		x=1,
 		y=0,
 		showarrow=False,
-		text="[P] = Preallocated, [ET] = Ephemeral Tickets, [NT] = No Tickets,<br>[B#] = Batch Count, [NB] = Batching Disabled",
+		text="[P] = Preallocated, [PT] = Persistent Tickets (QAC), [ET] = Ephemeral Tickets (QAC), [WT] = With Tokens (moodycamel),<br>[NT] = No Tickets (QAC)/No Tokens (moodycamel), [B#] = Batch/Bulk Count, [BWC#] = Bulk Count With Tokens (moodycamel),<br>+b = Batching Enabled (QAC), +i = idle sleep enabled (QAC)",
 		xref='paper',
 		yref='paper',
 		bgcolor=legendDetailBackground,
 		bordercolor="#000000",
-		yshift=-60,
+		yshift=-70,
 		xshift=60,
 		font=dict(
 			family='Courier New, monospace',
@@ -948,47 +1094,83 @@ for type in types:
 			color='#000000'
 		)
 	)]
-	typeName = '<span style="color: {};">{}</span>'.format(typeColor, type)
 
-	if type in enqueueData:
-		layout = plotly.graph_objs.Layout(
-			title = 'Raw Enqueue Throughput Comparison ({})'.format(typeName),
-			xaxis = dict(
-				title = 'Producer Threads',
-				tickformat = ',d'
-			),
-			yaxis = dict(
-				title = 'Throughput (op/sec)',
-				#range = [0,int(allMax["enqueue"]*1.05)],
-			),
-			annotations=annotations,
-			legend=legendAttrs,
-			barmode = 'group',
-			bargroupgap = 0.1,
-			barcornerradius=15,
-			#titlefont = titleAttrs
-		)
-		fig = plotly.graph_objs.Figure(
-			data = enqueueData[type],
-			layout = layout
-		)
-		plotly.offline.plot(
-			fig,
-			filename = os.path.join(dir, 'Enqueue_{}.html'.format(type)),
-			image='png', image_filename='enqueue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-		)
+	if not args.symmetrical_only:
+		if type in enqueueData:
+			layout = plotly.graph_objs.Layout(
+				title = 'Raw Enqueue Throughput Comparison ({})'.format(typeName),
+				xaxis = dict(
+					title = 'Producer Threads',
+					tickformat = ',d'
+				),
+				yaxis = dict(
+					title = 'Throughput (op/sec)',
+					#range = [0,int(allMax["enqueue"]*1.05)],
+				),
+				annotations=annotations,
+				legend=legendAttrs,
+				barmode = 'group',
+				bargroupgap = 0.1,
+				barcornerradius=15,
+				#titlefont = titleAttrs
+			)
+			fig = plotly.graph_objs.Figure(
+				data = enqueueData[type],
+				layout = layout
+			)
+			# plotly.offline.plot(
+			# 	fig,
+			# 	filename = os.path.join(dir, 'Enqueue_{}.html'.format(type)),
+			# 	image='png', image_filename='enqueue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+			# )
 
+			fig.write_image(os.path.join(imgDir, 'Enqueue_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+			sys.stdout.write(".")
+			sys.stdout.flush()
+
+			#time.sleep(5)
+
+			layout = plotly.graph_objs.Layout(
+				title = 'Raw Dequeue Throughput Comparison ({})'.format(typeName),
+				xaxis = dict(
+					title = 'Consumer Threads',
+					tickformat = ',d'
+				),
+				yaxis = dict(
+					title = 'Throughput (op/sec)',
+					#range = [0,int(allMax["dequeue"]*1.05)]
+				),
+				annotations=annotations,
+				legend=legendAttrs,
+				barmode = 'group',
+				bargroupgap = 0.1,
+				barcornerradius=15,
+				#titlefont = titleAttrs
+			)
+			fig = plotly.graph_objs.Figure(
+				data = dequeueData[type],
+				layout = layout
+			)
+			# plotly.offline.plot(
+			# 	fig,
+			# 	filename = os.path.join(dir, 'Dequeue_{}.html'.format(type)),
+			# 	image='png', image_filename='dequeue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+			# )
+
+			fig.write_image(os.path.join(imgDir, 'Dequeue_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+			sys.stdout.write(".")
+			sys.stdout.flush()
 		#time.sleep(5)
 
 		layout = plotly.graph_objs.Layout(
-			title = 'Raw Dequeue Throughput Comparison ({})'.format(typeName),
+			title = 'Raw Dequeue Throughput (Empty Queue) Comparison ({})'.format(typeName),
 			xaxis = dict(
 				title = 'Consumer Threads',
 				tickformat = ',d'
 			),
 			yaxis = dict(
 				title = 'Throughput (op/sec)',
-				#range = [0,int(allMax["dequeue"]*1.05)]
+				#range = [0,int(allMax["deq_empty"]*1.05)]
 			),
 			annotations=annotations,
 			legend=legendAttrs,
@@ -998,45 +1180,19 @@ for type in types:
 			#titlefont = titleAttrs
 		)
 		fig = plotly.graph_objs.Figure(
-			data = dequeueData[type],
+			data = dequeueEmptyData[type],
 			layout = layout
 		)
-		plotly.offline.plot(
-			fig,
-			filename = os.path.join(dir, 'Dequeue_{}.html'.format(type)),
-			image='png', image_filename='dequeue_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-		)
+		# plotly.offline.plot(
+		# 	fig,
+		# 	filename = os.path.join(dir, 'Dequeue_From_Empty_{}.html'.format(type)),
+		# 	image='png', image_filename='dequeue_from_empty_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		# )
 
-	#time.sleep(5)
-
-	layout = plotly.graph_objs.Layout(
-		title = 'Raw Dequeue Throughput (Empty Queue) Comparison ({})'.format(typeName),
-		xaxis = dict(
-			title = 'Consumer Threads',
-			tickformat = ',d'
-		),
-		yaxis = dict(
-			title = 'Throughput (op/sec)',
-			#range = [0,int(allMax["deq_empty"]*1.05)]
-		),
-		annotations=annotations,
-		legend=legendAttrs,
-		barmode = 'group',
-		bargroupgap = 0.1,
-		barcornerradius=15,
-		#titlefont = titleAttrs
-	)
-	fig = plotly.graph_objs.Figure(
-		data = dequeueEmptyData[type],
-		layout = layout
-	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'Dequeue_From_Empty_{}.html'.format(type)),
-		image='png', image_filename='dequeue_from_empty_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
-
-	#time.sleep(5)
+		fig.write_image(os.path.join(imgDir, 'Dequeue_From_Empty_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+		sys.stdout.write(".")
+		sys.stdout.flush()
+		#time.sleep(5)
 
 	layout = plotly.graph_objs.Layout(
 		title = 'Concurrent Throughput (Symmetrical Threads) Comparison ({})'.format(typeName),
@@ -1062,11 +1218,18 @@ for type in types:
 		data = symmetricData[type],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'symmetrical_{}.html'.format(type)),
-		image='png', image_filename='symmetrical_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'symmetrical_{}.html'.format(type)),
+	# 	image='png', image_filename='symmetrical_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
+	fig.write_image(os.path.join(imgDir, 'symmetrical_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
+
+	if args.symmetrical_only:
+		sys.stdout.write("\n")
+		continue
 
 	#time.sleep(5)
 
@@ -1091,11 +1254,15 @@ for type in types:
 		data = prodData1Consumer[type],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'prods1consumer_{}.html'.format(type)),
-		image='png', image_filename='prods1consumer_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'prods1consumer_{}.html'.format(type)),
+	# 	image='png', image_filename='prods1consumer_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
+
+	fig.write_image(os.path.join(imgDir, 'prods1consumer_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
 
 	layout = plotly.graph_objs.Layout(
 		title = 'Throughput By Producer Count ({} Consumers) Comparison ({})'.format(N, typeName),
@@ -1118,11 +1285,14 @@ for type in types:
 		data = prodDataNConsumers[type],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'prodsNconsumers_{}.html'.format(type)),
-		image='png', image_filename='prodsNconsumers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'prodsNconsumers_{}.html'.format(type)),
+	# 	image='png', image_filename='prodsNconsumers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
+	fig.write_image(os.path.join(imgDir, 'prodsNconsumers_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
 
 	layout = plotly.graph_objs.Layout(
 		title = 'Throughput By Producer Count ({} Consumers) Comparison ({})'.format(N/2, typeName),
@@ -1145,12 +1315,15 @@ for type in types:
 		data = prodDataNHalfConsumers[type],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'prodsNHalfconsumers_{}.html'.format(type)),
-		image='png', image_filename='prodsNHalfconsumers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'prodsNHalfconsumers_{}.html'.format(type)),
+	# 	image='png', image_filename='prodsNHalfconsumers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
 
+	fig.write_image(os.path.join(imgDir, 'prodsNHalfconsumers_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
 
 	layout = plotly.graph_objs.Layout(
 		title = 'Throughput By Consumer Count (1 Producer) Comparison ({})'.format(typeName),
@@ -1173,11 +1346,14 @@ for type in types:
 		data = conData1Producer[type],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'cons1producer_{}.html'.format(type)),
-		image='png', image_filename='cons1producer_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'cons1producer_{}.html'.format(type)),
+	# 	image='png', image_filename='cons1producer_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
+	fig.write_image(os.path.join(imgDir, 'cons1producer_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
 
 	layout = plotly.graph_objs.Layout(
 		title = 'Throughput By Consumer Count ({} Producers) Comparison ({})'.format(N, typeName),
@@ -1200,11 +1376,15 @@ for type in types:
 		data = conDataNProducers[type],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'consNproducers_{}.html'.format(type)),
-		image='png', image_filename='consNproducers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'consNproducers_{}.html'.format(type)),
+	# 	image='png', image_filename='consNproducers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
+
+	fig.write_image(os.path.join(imgDir, 'consNproducers_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
 
 	layout = plotly.graph_objs.Layout(
 		title = 'Throughput By Consumer Count ({} Producers) Comparison ({})'.format(N/2, typeName),
@@ -1227,11 +1407,15 @@ for type in types:
 		data = conDataNHalfProducers[type],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'consNHalfproducers_{}.html'.format(type)),
-		image='png', image_filename='consNHalfproducers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'consNHalfproducers_{}.html'.format(type)),
+	# 	image='png', image_filename='consNHalfproducers_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
+
+	fig.write_image(os.path.join(imgDir, 'consNHalfproducers_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
 
 	colors = []
 	for key in latencyKeys[type]:
@@ -1274,10 +1458,336 @@ for type in types:
 		data = [trace],
 		layout = layout
 	)
-	plotly.offline.plot(
-		fig,
-		filename = os.path.join(dir, 'latency_{}.html'.format(type)),
-		image='png', image_filename='latency_{}'.format(type), image_height=imageHeight, image_width=imageWidth
-	)
+	# plotly.offline.plot(
+	# 	fig,
+	# 	filename = os.path.join(dir, 'latency_{}.html'.format(type)),
+	# 	image='png', image_filename='latency_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+	# )
 
+	fig.write_image(os.path.join(imgDir, 'latency_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+	sys.stdout.write(".")
+	sys.stdout.flush()
+
+	if not args.builtin_filter_batch_cmp and type in singleWinners:
+		heatmaptext = []
+		heatmap = []
+
+		singleWinnerForType = singleWinners[type]
+
+		allTopContenders = set()
+		allWinners = set()
+		winnerColors = {}
+		for (producers, data) in singleWinnerForType.items():
+			for (consumers, winners) in data.items():
+				winners = sorted(winners, key=lambda x: x[1], reverse=True)
+				allWinners.add(winners[0][0])
+				for i in range(3):
+					winner = winners[i]
+					allTopContenders.add(winner[0])
+
+		colorscale = [[0, "rgb(127,127,127)"]]
+		count = len(allTopContenders)
+		reverseLookup = {}
+		reverseLookup["statistical-tie"] = 0
+		winnerColors["statistical-tie"] = "rgb(127,127,127)"
+		i = 0
+		for item in sorted(allTopContenders):
+			colorscale.append([(i+1)/(count), visuallyDistinctColors[i]])
+			reverseLookup[item] = (i+1)/(count)
+			winnerColors[item] = visuallyDistinctColors[i]
+			i += 1
+
+		for (producers, data) in singleWinnerForType.items():
+			for (consumers, winners) in data.items():
+				winners = sorted(winners, key=lambda x: x[1], reverse=True)
+				while len(heatmap) <= consumers:
+					heatmap.append([])
+					heatmaptext.append([])
+				while len(heatmap[consumers]) <= producers:
+					heatmap[consumers].append(None)
+					heatmaptext[consumers].append(None)
+				heatmap[consumers][producers] = reverseLookup[winners[0][0]]
+				pct2ndPlace = (1. - (winners[1][1] / winners[0][1]))
+				if pct2ndPlace < 0.02:
+					heatmap[consumers][producers] = 0
+				txt = ""
+				for i in range(3):
+					winner = winners[i]
+					name = winner[0].split(" ")[0]
+					if "With Tokens" in winner[0]:
+						name += "[T]"
+					if "No Tokens" in winner[0]:
+						name += "[NT]"
+					# if "16384" in winner[0] or "131072" in winner[0]:
+					# 	name += "[S]"
+					# if "10000000" in winner[0] or "5000000" in winner[0]:
+					# 	name += "[L]"
+					bolded = False
+					if txt != "":
+						txt += "<br>"
+						#txt += "<sub>"
+					else:
+						bolded = True
+						txt += "<b>"
+					txt += name
+					if bolded:
+						txt += "</b>"
+					else:
+						pct = round((1. - (winner[1] / winners[0][1]))*100, 1)
+						txt += f" (-{pct}%)"
+						#txt += "</sub>"
+				heatmaptext[consumers][producers] = txt
+
+		trace = plotly.graph_objs.Heatmap(
+			z=heatmap,
+			# text=heatmaptxt,
+			colorscale=colorscale,
+			#zsmooth='best',
+			zmin=0,
+			zmax=1,
+			# texttemplate="%{z:.4s}"
+			text=heatmaptext,
+			texttemplate="%{text}",
+			showscale=False
+		)
+		trace2 = plotly.graph_objs.Scatter(
+			x=[len(heatmap) - 1, 0.5],
+			y=[0.5, len(heatmap[1]) - 1],
+			name='Overload line',
+			mode='lines',
+			line=dict(
+				color='rgb(127, 127, 127)'
+			)
+		)
+
+		annotations = []
+		i = 0
+		legend = ["statistical-tie"]
+		legend.extend(sorted(allWinners))
+		for item in legend:
+			name = item.split(" ")[0]
+			if "With Tokens" in item:
+				name += "[Tokens]"
+			if "No Tokens" in item:
+				name += "[No Tokens]"
+			if "statistical" in item:
+				name = "Statistical Tie (<2%)"
+			color = winnerColors[item]
+			annotations.append(
+				dict(
+					x=0.25,
+					y=1,
+					showarrow=False,
+					text=name,
+					xref='paper',
+					yref='paper',
+					bgcolor=color,
+					bordercolor="#000000",
+					yshift=60 - 30 * (math.floor(i/6) + 1),
+					xshift=240 * i,
+					width=220,
+					font=dict(
+						family='Courier New, monospace',
+						size=12,
+						color='#ffffff'
+					)
+				)
+			)
+			i += 1
+
+		data = [trace, trace2]
+		layout = plotly.graph_objs.Layout(
+			title='Fastest Queue Under Contention ({})'.format(typeName),
+			xaxis=dict(
+				title='Producer Threads',
+				range=[1.5 if args.no_singles else 0.5, len(heatmap) - 0.5],
+				tickformat=',d'
+			),
+			yaxis=dict(
+				title='Consumer Threads',
+				range=[1.5 if args.no_singles else 0.5, len(heatmap[1]) - 0.5],
+				tickformat=',d'
+			),
+			hovermode='closest',
+			# titlefont = titleAttrs
+			annotations = annotations,
+		)
+		fig = plotly.graph_objs.Figure(
+			data=data,
+			layout=layout
+		)
+		# plotly.offline.plot(
+		# 	fig,
+		# 	filename = os.path.join(dir, 'fastest_queue_single_{}.html'.format(type)),
+		# 	image='png', image_filename='fastest_queue_single_{}'.format(type), image_height=imageHeight, image_width=imageWidth
+		# )
+		fig.write_image(os.path.join(imgDir, 'fastest_queue_single_{}.png'.format(type)), width=imageWidth, height=imageHeight)
+		sys.stdout.write(".")
+		sys.stdout.flush()
+
+	if not args.builtin_filter_single_cmp:
+		for batchSize in [10, 100, 1000]:
+
+			heatmaptext = []
+			heatmap = []
+
+			if type not in batchWinners or batchSize not in batchWinners[type]:
+				continue
+
+			singleWinnerForType = batchWinners[type][batchSize]
+
+			allTopContenders = set()
+			allWinners = set()
+			winnerColors = {}
+			for (producers, data) in singleWinnerForType.items():
+				for (consumers, winners) in data.items():
+					winners = sorted(winners, key=lambda x: x[1], reverse=True)
+					allWinners.add(winners[0][0])
+					for i in range(3):
+						winner = winners[i]
+						allTopContenders.add(winner[0])
+
+			colorscale = [[0, "rgb(127,127,127)"]]
+			count = len(allTopContenders)
+			reverseLookup = {}
+			reverseLookup["statistical-tie"] = 0
+			winnerColors["statistical-tie"] = "rgb(127,127,127)"
+			i = 0
+			for item in sorted(allTopContenders):
+				colorscale.append([(i + 1) / (count), visuallyDistinctColors[i]])
+				reverseLookup[item] = (i + 1) / (count)
+				winnerColors[item] = visuallyDistinctColors[i]
+				i += 1
+
+			for (producers, data) in singleWinnerForType.items():
+				for (consumers, winners) in data.items():
+					winners = sorted(winners, key=lambda x: x[1], reverse=True)
+					while len(heatmap) <= consumers:
+						heatmap.append([])
+						heatmaptext.append([])
+					while len(heatmap[consumers]) <= producers:
+						heatmap[consumers].append(None)
+						heatmaptext[consumers].append(None)
+					heatmap[consumers][producers] = reverseLookup[winners[0][0]]
+					pct2ndPlace = (1. - (winners[1][1] / winners[0][1]))
+					if pct2ndPlace < 0.02:
+						heatmap[consumers][producers] = 0
+					txt = ""
+					for i in range(3):
+						winner = winners[i]
+						name = winner[0].split(" ")[0]
+						if "With Tokens" in winner[0]:
+							name += "[T]"
+						if "No Tokens" in winner[0]:
+							name += "[NT]"
+						# if "16384" in winner[0] or "131072" in winner[0]:
+						# 	name += "[S]"
+						# if "10000000" in winner[0] or "5000000" in winner[0]:
+						# 	name += "[L]"
+						bolded = False
+						if txt != "":
+							txt += "<br>"
+						# txt += "<sub>"
+						else:
+							bolded = True
+							txt += "<b>"
+						txt += name
+						if bolded:
+							txt += "</b>"
+						else:
+							pct = round((1. - (winner[1] / winners[0][1])) * 100, 1)
+							txt += f" (-{pct}%)"
+					# txt += "</sub>"
+					heatmaptext[consumers][producers] = txt
+
+			trace = plotly.graph_objs.Heatmap(
+				z=heatmap,
+				# text=heatmaptxt,
+				colorscale=colorscale,
+				# zsmooth='best',
+				zmin=0,
+				zmax=1,
+				# texttemplate="%{z:.4s}"
+				text=heatmaptext,
+				texttemplate="%{text}",
+				showscale=False
+			)
+			trace2 = plotly.graph_objs.Scatter(
+				x=[len(heatmap) - 1, 0.5],
+				y=[0.5, len(heatmap[1]) - 1],
+				name='Overload line',
+				mode='lines',
+				line=dict(
+					color='rgb(127, 127, 127)'
+				)
+			)
+
+			annotations = []
+			i = 0
+			legend = ["statistical-tie"]
+			legend.extend(sorted(allWinners))
+			for item in legend:
+				name = item.split(" ")[0]
+				if "With Tokens" in item:
+					name += "[Tokens]"
+				if "No Tokens" in item:
+					name += "[No Tokens]"
+				if "statistical" in item:
+					name = "Statistical Tie (<2%)"
+				color = winnerColors[item]
+				annotations.append(
+					dict(
+						x=0.25,
+						y=1,
+						showarrow=False,
+						text=name,
+						xref='paper',
+						yref='paper',
+						bgcolor=color,
+						bordercolor="#000000",
+						yshift=60 - 30 * (math.floor(i / 6) + 1),
+						xshift=240 * i,
+						width=220,
+						font=dict(
+							family='Courier New, monospace',
+							size=12,
+							color='#ffffff'
+						)
+					)
+				)
+				i += 1
+
+			data = [trace, trace2]
+			layout = plotly.graph_objs.Layout(
+				title='Fastest Queue Under Contention ({} / Batch ({}))'.format(typeName, batchSize),
+				xaxis=dict(
+					title='Producer Threads',
+					range=[1.5 if args.no_singles else 0.5, len(heatmap) - 0.5],
+					tickformat=',d'
+				),
+				yaxis=dict(
+					title='Consumer Threads',
+					range=[1.5 if args.no_singles else 0.5, len(heatmap[1]) - 0.5],
+					tickformat=',d'
+				),
+				hovermode='closest',
+				# titlefont = titleAttrs
+				annotations=annotations,
+			)
+			fig = plotly.graph_objs.Figure(
+				data=data,
+				layout=layout
+			)
+			# plotly.offline.plot(
+			# 	fig,
+			# 	filename=os.path.join(dir, 'fastest_queue_batch_{}_{}.html'.format(batchSize, type)),
+			# 	image='png', image_filename='fastest_queue_batch_{}_{}'.format(batchSize, type), image_height=imageHeight,
+			# 	image_width=imageWidth
+			# )
+
+			fig.write_image(os.path.join(imgDir, 'fastest_queue_batch_{}_{}.png'.format(batchSize, type)), width=imageWidth, height=imageHeight)
+			sys.stdout.write(".")
+			sys.stdout.flush()
+
+	sys.stdout.write("\n")
 	#time.sleep(5)
