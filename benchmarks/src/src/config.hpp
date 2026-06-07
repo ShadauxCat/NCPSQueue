@@ -8,6 +8,18 @@
 
 #define RUNMODE MODE_BENCHMARK
 
+// Quick config sets:
+// Default values: qacFullSet = false, moodyCamelFullSet64k = false, symmetricThreadsOnly = false, QAC_AND_MOODYCAMEL_ONLY not defined
+// char = true, int64 = true, FixedString64Bytes = true
+// This is used to compute full matrix benchmarks.
+#define CONFIG_FULLMATRIX 0
+// Default values: qacFullSet = true, moodyCamelFullSet64k = true, symmetricThreadsOnly = true, QAC_AND_MOODYCAMEL_ONLY defined
+// char = false, int64 = true, FixedString64Bytes = false
+// This is used to compare the impacts of various different configurations.
+#define CONFIG_SYMMETRICAL_COMPS 1
+
+#define TEST_CONFIG CONFIG_SYMMETRICAL_COMPS
+
 #include "util/FixedStaticString.hpp"
 
 enum TestType
@@ -42,7 +54,15 @@ namespace benchmarkConfig
 	static constexpr bool moodyCamelFullSet = true;
 #else
 	static constexpr int nIters = 10;
+
+#if TEST_CONFIG == CONFIG_SYMMETRICAL_COMPS
+	static constexpr bool qacFullSet = true;
+	static constexpr bool moodyCamelFullSet64k = true;
+#else
 	static constexpr bool qacFullSet = false;
+	static constexpr bool moodyCamelFullSet64k = false;
+#endif
+
 	static constexpr bool moodyCamelFullSet = false;
 #endif
 
@@ -50,9 +70,14 @@ namespace benchmarkConfig
 
 	static constexpr TestType testType = TestType::Both;
 
+#if TEST_CONFIG == CONFIG_SYMMETRICAL_COMPS
 	// If true, the test will only use MIN_PRODUCERS and MAX_PRODUCERS
 	// MIN_CONSUMERS and MAX_CONSUMERS will be ignored
-	static constexpr bool symmetricThreadsOnly = false;
+	static constexpr bool symmetricThreadsOnly = true;
+#else
+	static constexpr bool symmetricThreadsOnly = true;
+#endif
+
 }
 
 // Can't use constexpr here because hardware_concurrency() isn't constexpr
@@ -64,9 +89,15 @@ namespace benchmarkConfig
 
 namespace benchmarkTypes
 {
+#if TEST_CONFIG == CONFIG_SYMMETRICAL_COMPS
+	constexpr bool Char = false;
+	constexpr bool Int64 = true;
+	constexpr bool FixedString64Bytes = false;
+#else
 	constexpr bool Char = true;
 	constexpr bool Int64 = true;
 	constexpr bool FixedString64Bytes = true;
+#endif
 }
 
 namespace benchmarkTests
@@ -80,7 +111,12 @@ namespace benchmarkTests
 
 //#define QAC_ONLY
 
+#if TEST_CONFIG == CONFIG_SYMMETRICAL_COMPS
+#define QAC_AND_MOODYCAMEL_ONLY
+#endif
+
 #ifndef QAC_ONLY
+#ifndef QAC_AND_MOODYCAMEL_ONLY
 // Commenting out any of the below #include directives will disable the tests on it.
 // std::deque + std::mutex
 #include "wrappers/deque.hpp"
@@ -122,6 +158,7 @@ namespace benchmarkTests
 #include "wrappers/xenium/RamalheteQueue.hpp"
 // Excluded because the 1024Cores queue above is the original canonical version of this algorithm.
 //#include "wrappers/xenium/VyukovBoundedQueue.hpp"
+#endif
 
 // moodycamel
 #include "wrappers/moodycamel.hpp"
